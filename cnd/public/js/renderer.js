@@ -10,6 +10,23 @@ const dy_for_linespacing = 5; // Adjust for spacing between lines
 //////////
 
 
+function getGroupOnAndAddToGroupIndices(edgeId) {
+
+
+    // Pattern _g_${groupOn}_${addToGroup}_
+    const pattern = /_g_(\d+)_(\d+)_/;
+    const match = edgeId.match(pattern);
+    if (match) {
+        const groupOnIndex = parseInt(match[1]);
+        const addToGroupIndex = parseInt(match[2]);
+        return { groupOnIndex, addToGroupIndex };
+    }
+    else {
+        throw new Error(`Edge ID ${edgeId} does not match the expected pattern.`);
+    }
+}
+
+
 
 function adjustPointToRectanglePerimeter(point, rect) {
     const { x, y, width, height } = rect;
@@ -254,20 +271,9 @@ function setupLayout(d3, nodes, edges, constraints, groups, width, height) {
                     let sourceIndex = getNodeIndex(source.id);
                     let targetIndex = getNodeIndex(target.id);
 
-                    let potentialTargetGroups = getContainingGroups(groups, target);
-                    let potentialSourceGroups = getContainingGroups(groups, source);
+                    // Get the groupOn and addToGroup indices
+                    let { groupOnIndex, addToGroupIndex } = getGroupOnAndAddToGroupIndices(n);
 
-
-                    let targetGroup = potentialTargetGroups.find(group => group.keyNode === sourceIndex);
-                    let sourceGroup = potentialSourceGroups.find(group => group.keyNode === targetIndex);
-
-                    if (targetGroup && sourceGroup) {
-                        console.error('We got a target AND a source group', targetGroup, sourceGroup);
-                    }
-
-
-                    // Only one of source group and target group can be a group.
-                    // Within source group, see if the target is the key
 
                     function closestPointOnRect(bounds, point) {
                         // Destructure the rectangle bounds
@@ -292,33 +298,44 @@ function setupLayout(d3, nodes, edges, constraints, groups, width, height) {
                         return { x: closestX, y: closestY };
                     }
 
+                    // The target of the edge is the relevant group member.
+                    let addTargetToGroup = groupOnIndex < addToGroupIndex;
+                    // The source of the edge is the relevant group member.
+                    let addSourceToGroup = groupOnIndex >= addToGroupIndex;
 
+                    if (addTargetToGroup) {
 
-
-                    if (targetGroup) {
-                        let newTargetCoords = closestPointOnRect(targetGroup.bounds, route[0]);
-                        let currentTarget = route[route.length - 1];
-                        currentTarget.x = newTargetCoords.x;
-                        currentTarget.y = newTargetCoords.y;
-                        route[route.length - 1] = currentTarget;
-
-
+                        let potentialGroups = getContainingGroups(groups, target);
+                        let targetGroup = potentialGroups.find(group => group.keyNode === sourceIndex);
+                        if (targetGroup) {
+                            let newTargetCoords = closestPointOnRect(targetGroup.bounds, route[0]);
+                            let currentTarget = route[route.length - 1];
+                            currentTarget.x = newTargetCoords.x;
+                            currentTarget.y = newTargetCoords.y;
+                            route[route.length - 1] = currentTarget;
+                        }
+                        else {
+                            console.log("Target group not found", potentialGroups, targetIndex, n);
+                        }
                     }
-                    else if (sourceGroup) {
+                    else if (addSourceToGroup) {
 
-                        console.log(`From group ${sourceGroup.id} to the group ${target.id}`);
-
-                        let newSourceCoords = closestPointOnRect(sourceGroup.bounds.inflate(-1), route[route.length - 1]);
-                        let currentSource = route[0];
-                        currentSource.x = newSourceCoords.x;
-                        currentSource.y = newSourceCoords.y;
-                        route[0] = currentSource;
+                        let potentialGroups = getContainingGroups(groups, source);
+                        let sourceGroup = potentialGroups.find(group => group.keyNode === targetIndex);
+                        if (sourceGroup) {
+                            let newSourceCoords = closestPointOnRect(sourceGroup.bounds.inflate(-1), route[route.length - 1]);
+                            let currentSource = route[0];
+                            currentSource.x = newSourceCoords.x;
+                            currentSource.y = newSourceCoords.y;
+                            route[0] = currentSource;
+                        }
+                        else {
+                            console.log("Source group not found", potentialGroups, sourceIndex, targetIndex, n );
+                        }
 
                     }
                     else {
                         console.log("This is a group edge, but neither source nor target is a group.", d);
-                        console.log(potentialSourceGroups);
-                        console.log(potentialTargetGroups);
                     }
 
                     // Not ideal but we dont want odd curves.
@@ -591,20 +608,49 @@ function setupLayout(d3, nodes, edges, constraints, groups, width, height) {
             return f;
         });
 
+    const SMALL_IMG_SCALE_FACTOR = 0.3;
+
+    
+
     node.filter(d => d.icon) // Filter nodes that have an icon
         .append("image")
         .attr("xlink:href", d => d.icon)
-        .attr("width", function (d) { return d.width; }) // Scale down the icon to fit inside the rectangle
-        .attr("height", function (d) { return d.height; }) // Scale down the icon to fit inside the rectangle
-        .attr("x", function (d) { return -d.width * 0.5; }) // Center the icon horizontally
-        .attr("y", function (d) { return -d.height * 0.5; }) // Center the icon vertically
-        // I want to show some text on hover
+        .attr("width", function (d) { 
+            if (d.showLabels) {
+                return d.width * SMALL_IMG_SCALE_FACTOR; 
+            }
+            return d.width; 
+        }) // Scale down the icon to fit inside the rectangle
+        .attr("height", function (d) { 
+            if (d.showLabels) {
+                return d.height * SMALL_IMG_SCALE_FACTOR; 
+            }
+            return d.height; 
+        }) // Scale down the icon to fit inside the rectangle
+        .attr("x", function (d) { 
+            if (d.showLabels) {
+                // Move to the top-right corner
+                return d.x + d.width - (d.width * SMALL_IMG_SCALE_FACTOR); 
+            }
+            // Center the icon horizontally
+            return d.x - d.width / 2; 
+        })
+        .attr("y", function (d) { 
+            if (d.showLabels) {
+                // Align with the top edge
+                return d.y - d.height / 2; 
+            }
+            // Center the icon vertically
+            return d.y - d.height / 2; 
+        })
         .append("title")
         .text(function (d) { return d.name; })
         .on("error", function (d) {
             d3.select(this).attr("xlink:href", "img/default.png"); // Replace with a default icon
             console.error(`Failed to load icon for node ${d.id}: ${d.icon}`);
         });
+
+
 
 
     // Add most specific type label
@@ -626,7 +672,9 @@ function setupLayout(d3, nodes, edges, constraints, groups, width, height) {
                     return;
                 }
 
-                let displayLabel = d.icon ? "" : d.name;
+
+                let shouldShowLabels = d.showLabels;
+                let displayLabel = shouldShowLabels ? d.name : "";
 
 
                 // Append tspan for d.name
@@ -636,15 +684,17 @@ function setupLayout(d3, nodes, edges, constraints, groups, width, height) {
                     .style("font-weight", "bold")
                     .text(displayLabel);
 
-                var y = 1; // Start from the next line for attributes
+                if (shouldShowLabels) {
+                    var y = 1; // Start from the next line for attributes
 
-                // Append tspans for each attribute
-                for (let key in d.attributes) {
-                    d3.select(this).append("tspan")
-                        .attr("x", 0) // Align with the parent text element
-                        .attr("dy", `${y}em`) // Move each attribute to a new line
-                        .text(key + ": " + d.attributes[key]);
-                    y += 1; // Increment for the next line
+                    // Append tspans for each attribute
+                    for (let key in d.attributes) {
+                        d3.select(this).append("tspan")
+                            .attr("x", 0) // Align with the parent text element
+                            .attr("dy", `${y}em`) // Move each attribute to a new line
+                            .text(key + ": " + d.attributes[key]);
+                        y += 1; // Increment for the next line
+                    }
                 }
             })
             .call(colaLayout.drag);
@@ -736,8 +786,24 @@ function setupLayout(d3, nodes, edges, constraints, groups, width, height) {
             .attr("height", function (d) { return d.bounds.height(); });
 
         node.select("image")
-            .attr("x", function (d) { return d.bounds.x; })
-            .attr("y", function (d) { return d.bounds.y; });
+        .attr("x", function (d) {
+            if (d.showLabels) {
+                // Move to the top-right corner
+                return d.x + (d.width/2) - (d.width * SMALL_IMG_SCALE_FACTOR);
+            } else {
+                // Align with d.bounds.x
+                return d.bounds.x;
+            }
+        })
+        .attr("y", function (d) {
+            if (d.showLabels) {
+                // Align with the top edge
+                return d.y - d.height / 2;
+            } else {
+                // Align with d.bounds.y
+                return d.bounds.y;
+            }
+        })
 
         mostSpecificTypeLabel
             .attr("x", function (d) { return d.x - d.width / 2 + 5; })
@@ -773,26 +839,40 @@ function setupLayout(d3, nodes, edges, constraints, groups, width, height) {
                 let n = d.id;
                 if (n.startsWith("_g_")) {
 
-                    let potentialTargetGroups = getContainingGroups(groups, target);
-                    let potentialSourceGroups = getContainingGroups(groups, source);
+                    // First get the groupOn and addToGroup indices
+                    let { groupOnIndex, addToGroupIndex } = getGroupOnAndAddToGroupIndices(n);
+                    let addSourceToGroup = groupOnIndex >= addToGroupIndex;
+                    let addTargetToGroup = groupOnIndex < addToGroupIndex;
 
-                    let targetGroup = potentialTargetGroups.find(group => group.keyNode === sourceIndex);
-                    let sourceGroup = potentialSourceGroups.find(group => group.keyNode === targetIndex);
 
-                    if (sourceGroup) {
-                        source = sourceGroup;
-                        source.innerBounds = sourceGroup.bounds.inflate(-1 * sourceGroup.padding);
+                    if (addTargetToGroup) {
+
+                        let potentialGroups = getContainingGroups(groups, target);
+                        let targetGroup = potentialGroups.find(group => group.keyNode === sourceIndex);
+                        if (targetGroup) {
+                            target = targetGroup;
+                            target.innerBounds = targetGroup.bounds.inflate(-1 * targetGroup.padding);
+                        }
+                        else {
+                            console.log("Target group not found", potentialGroups, targetIndex);
+                        }
                     }
-                    else if (targetGroup) {
-                        target = targetGroup;
-                        target.innerBounds = targetGroup.bounds.inflate(-1 * targetGroup.padding);
+                    else if (addSourceToGroup) {
+
+                        let potentialGroups = getContainingGroups(groups, source);
+                        let sourceGroup = potentialGroups.find(group => group.keyNode === targetIndex);
+                        if (sourceGroup) {
+                            source = sourceGroup;
+                            source.innerBounds = sourceGroup.bounds.inflate(-1 * sourceGroup.padding);
+                        }
+                        else {
+                            console.log("Source group not found", potentialGroups, sourceIndex);
+                        }
                     }
                     else {
                         console.log("This is a group edge (_on tick_), but neither source nor target is a group.", d);
                     }
                 }
-
-
                 var route = cola.makeEdgeBetween(source.innerBounds, target.innerBounds, 5);
                 return lineFunction([route.sourceIntersection, route.arrowStart]);
             })
