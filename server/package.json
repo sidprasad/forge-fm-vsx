@@ -11,8 +11,14 @@
 		"url": ""
 	},
 	"dependencies": {
+		"antlr4ts": "^0.5.0-alpha.4",
+		"antlr4ts-cli": "^0.5.0-alpha.4",
 		"vscode-languageserver": "^7.0.0",
 		"vscode-languageserver-textdocument": "^1.0.1"
 	},
-	"scripts": {}
+	"scripts": {
+		"antlr": "antlr4ts -visitor grammars/ForgeLexer.g4 -o src/parser && cp src/parser/grammars/ForgeLexer.tokens grammars/ && antlr4ts -visitor grammars/Forge.g4 -o src/parser",
+		"precompile": "npm run antlr",
+		"compile": "tsc -b"
+	}
 }

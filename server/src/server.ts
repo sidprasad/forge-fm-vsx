@@ -10,7 +10,16 @@ import {
 	CompletionItemKind,
 	TextDocumentPositionParams,
 	TextDocumentSyncKind,
-	InitializeResult
+	InitializeResult,
+	DocumentSymbolParams,
+	SymbolInformation,
+	SymbolKind,
+	DefinitionParams,
+	Definition,
+	Location,
+	HoverParams,
+	Hover,
+	MarkupKind
 } from 'vscode-languageserver/node';
 
 import {
@@ -20,6 +29,7 @@ import { ChildProcess, spawn } from 'child_process';
 import * as path from 'path';
 import * as net from 'net';
 import { Buffer } from 'buffer';
+import { ForgeSymbolExtractor, ForgeSymbol, SymbolKind as ForgeSymbolKind } from './symbols';
 
 // Create a connection for the server, using Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
@@ -56,7 +66,13 @@ connection.onInitialize((params: InitializeParams) => {
 			// Tell the client that this server supports code completion.
 			completionProvider: {
 				resolveProvider: true
-			}
+			},
+			// Support for go-to-definition
+			definitionProvider: true,
+			// Support for hover information
+			hoverProvider: true,
+			// Support for document symbols
+			documentSymbolProvider: true
 		}
 	};
 	if (hasWorkspaceFolderCapability) {
@@ -330,6 +346,137 @@ connection.onExit(() => {
 // Make the text document manager listen on the connection
 // for open, change and close text document events
 documents.listen(connection);
+
+// ========== LSP Feature Implementations ==========
+
+// Cache symbols per document
+const documentSymbols = new Map<string, ForgeSymbol[]>();
+
+// Update symbols when document changes
+documents.onDidChangeContent(change => {
+	const text = change.document.getText();
+	const symbols = ForgeSymbolExtractor.extractSymbols(text);
+	documentSymbols.set(change.document.uri, symbols);
+});
+
+// Provide document symbols (outline view)
+connection.onDocumentSymbol((params: DocumentSymbolParams): SymbolInformation[] => {
+	const document = documents.get(params.textDocument.uri);
+	if (!document) return [];
+	
+	const symbols = documentSymbols.get(params.textDocument.uri);
+	if (!symbols) return [];
+	
+	return symbols.map(symbol => ({
+		name: symbol.name,
+		kind: forgeSymbolKindToLSP(symbol.kind),
+		location: Location.create(params.textDocument.uri, symbol.range),
+		containerName: symbol.detail
+	}));
+});
+
+// Provide go-to-definition
+connection.onDefinition((params: DefinitionParams): Definition | null => {
+	const document = documents.get(params.textDocument.uri);
+	if (!document) return null;
+	
+	const symbols = documentSymbols.get(params.textDocument.uri);
+	if (!symbols) return null;
+	
+	// Get word at position
+	const offset = document.offsetAt(params.position);
+	const text = document.getText();
+	const wordRange = getWordRangeAtPosition(text, offset);
+	if (!wordRange) return null;
+	
+	const word = text.substring(wordRange.start, wordRange.end);
+	
+	// Find definition of this symbol
+	const definitions = symbols.filter(s => 
+		s.name === word && 
+		(s.kind === ForgeSymbolKind.Sig || 
+		 s.kind === ForgeSymbolKind.Predicate || 
+		 s.kind === ForgeSymbolKind.Function)
+	);
+	
+	if (definitions.length === 0) return null;
+	
+	// Return first definition
+	return Location.create(params.textDocument.uri, definitions[0].range);
+});
+
+// Provide hover information
+connection.onHover((params: HoverParams): Hover | null => {
+	const document = documents.get(params.textDocument.uri);
+	if (!document) return null;
+	
+	const symbols = documentSymbols.get(params.textDocument.uri);
+	if (!symbols) return null;
+	
+	// Get word at position
+	const offset = document.offsetAt(params.position);
+	const text = document.getText();
+	const wordRange = getWordRangeAtPosition(text, offset);
+	if (!wordRange) return null;
+	
+	const word = text.substring(wordRange.start, wordRange.end);
+	
+	// Find symbol info
+	const symbol = symbols.find(s => s.name === word);
+	if (!symbol) return null;
+	
+	let hoverText = `**${symbol.kind}** \`${symbol.name}\``;
+	if (symbol.detail) {
+		hoverText += `\n\n\`\`\`forge\n${symbol.detail}\n\`\`\``;
+	}
+	if (symbol.documentation) {
+		hoverText += `\n\n${symbol.documentation}`;
+	}
+	
+	return {
+		contents: {
+			kind: MarkupKind.Markdown,
+			value: hoverText
+		}
+	};
+});
+
+// Helper to convert Forge symbol kinds to LSP symbol kinds
+function forgeSymbolKindToLSP(kind: ForgeSymbolKind): SymbolKind {
+	switch (kind) {
+		case ForgeSymbolKind.Sig:
+			return SymbolKind.Class;
+		case ForgeSymbolKind.Predicate:
+			return SymbolKind.Function;
+		case ForgeSymbolKind.Function:
+			return SymbolKind.Function;
+		case ForgeSymbolKind.Field:
+			return SymbolKind.Field;
+		case ForgeSymbolKind.Test:
+			return SymbolKind.Method;
+		case ForgeSymbolKind.Example:
+			return SymbolKind.Constant;
+		default:
+			return SymbolKind.Variable;
+	}
+}
+
+// Helper to get word range at position
+function getWordRangeAtPosition(text: string, offset: number): { start: number; end: number } | null {
+	const identifierPattern = /[a-zA-Z_][a-zA-Z0-9_]*/g;
+	let match;
+	
+	while ((match = identifierPattern.exec(text)) !== null) {
+		if (offset >= match.index && offset <= match.index + match[0].length) {
+			return {
+				start: match.index,
+				end: match.index + match[0].length
+			};
+		}
+	}
+	
+	return null;
+}
 
 // Listen on the connection
 connection.listen();

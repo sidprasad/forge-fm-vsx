@@ -1,4 +1,3 @@
-import { RacketProcess } from './racketprocess';
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -8,6 +7,7 @@ import { LogLevel, Logger, Event } from './logger';
 import { SymmetricEncryptor } from './encryption-util';
 import * as os from 'os';
 import { tempFile } from './gen-utilities';
+import { ForgeRunner } from './forge-runner';
 
 export class RunResult {
 
@@ -423,10 +423,8 @@ export class HintGenerator {
 
 
 	private async runTestsAgainstModel(tests: string, model: string): Promise<RunResult> {
-
 		const forgeEvalDiagnostics = vscode.languages.createDiagnosticCollection('Forge Eval');
-		const racket: RacketProcess = RacketProcess.getInstance(forgeEvalDiagnostics, this.forgeOutput);
-
+		const forgeRunner = ForgeRunner.getInstance(this.forgeOutput);
 
 		const toRun = combineTestsWithModel(model, tests);
 		const LAUNCH_FAILURE_ERR = "Could not run Toadus Ponens process.";
@@ -438,12 +436,13 @@ export class HintGenerator {
 		try {
 			fs.writeFileSync(tempFilePath, toRun);
 
-			let stdoutListener = (data: string) => { runresult.stdout += data; };
-			let stderrListener = (data: string) => { runresult.stderr += data; };
-			let promise = racket.runFile(tempFilePath,stdoutListener, stderrListener);
-
-			// Now we want to await the promise, but want different behavior based on the result.
-			await promise;
+			const stdoutListener = (data: string) => { runresult.stdout += data; };
+			const stderrListener = (data: string) => { runresult.stderr += data; };
+			
+			await forgeRunner.runFile(tempFilePath, {
+				onStdout: stdoutListener,
+				onStderr: stderrListener
+			});
 
 		} catch (e) {
 			vscode.window.showErrorMessage(`Toadus Ponens run failed, perhaps be because VS Code did not have permission to write a file to your OS temp folder (${os.tmpdir()}). Consult the Toadus Ponens guide for how to modify this. Full error message : ${e}`);

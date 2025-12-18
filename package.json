@@ -68,6 +68,12 @@
 					"default": "messages",
 					"description": "Traces the communication between VS Code and the language server."
 				},
+				"forge.racketPath": {
+					"scope": "resource",
+					"type": "string",
+					"default": "",
+					"description": "Path to Racket executable. Leave empty to auto-detect."
+				},
 				"forge.minVersion": {
 					"scope": "resource",
 					"type": "string",

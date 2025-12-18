@@ -1,0 +1,173 @@
+# Agent Guidelines for Forge Language Extension
+
+## Core Principles
+
+### 1. Keep It Lightweight
+- **Minimize dependencies**: Only add npm packages when absolutely necessary
+- **Prefer built-in APIs**: Use Node.js/VS Code built-ins over external libraries
+- **Small, focused modules**: Each file should have a single, clear responsibility
+- **No bloat**: Remove unused code, dependencies, and files aggressively
+
+### 2. Delete Unused Files
+- **Before adding**: Check if existing code can be refactored instead
+- **After refactoring**: Delete old implementations that are no longer used
+- **Regular cleanup**: Remove commented-out code, unused imports, dead functions
+- **Document deletions**: Explain why files were removed in commit messages
+
+### 3. Always Add Regression Tests
+- **For every new feature**: Add tests before marking work complete
+- **For every bug fix**: Add a test that would have caught the bug
+- **Keep tests simple**: Use VS Code's test framework, prefer integration tests
+- **Test real scenarios**: Focus on user workflows, not implementation details
+
+## Specific Guidelines
+
+### Code Quality
+```typescript
+// ✅ Good: Direct, typed, minimal
+async runFile(path: string): Promise<void> {
+    const result = spawn(this.racketPath, [path]);
+    // ...
+}
+
+// ❌ Bad: Over-engineered, unnecessary abstraction
+class ProcessManager extends EventEmitter {
+    async executeWithStrategy(config: ExecutionConfig): Promise<Result> {
+        // 50 lines of abstraction for a simple spawn...
+    }
+}
+```
+
+### File Organization
+```
+✅ Keep:
+- Files actively used in the extension
+- Clear, single-purpose modules
+- Necessary configuration files
+
+❌ Delete:
+- Old implementations after refactoring
+- Commented-out code blocks
+- Unused utility files
+- Experimental code that didn't ship
+```
+
+### Testing Strategy
+```typescript
+// ✅ Good: Tests actual user workflow
+test('Run Forge file shows output in channel', async () => {
+    await vscode.commands.executeCommand('forge.runFile');
+    assert(outputChannel.contains('Running file'));
+});
+
+// ❌ Bad: Tests internal implementation
+test('RacketProcess._internalHelper returns correct type', () => {
+    // Testing private methods instead of behavior
+});
+```
+
+## Decision Framework
+
+When working on this codebase, ask:
+
+1. **Does this solve a real user problem?** 
+   - If no → don't add it
+
+2. **Can existing code be refactored instead?**
+   - If yes → refactor, don't duplicate
+
+3. **Will this add significant complexity?**
+   - If yes → find a simpler approach
+
+4. **Can I test this automatically?**
+   - If no → reconsider the approach
+
+5. **What files can I delete after this change?**
+   - Always look for cleanup opportunities
+
+## Common Tasks
+
+### Adding a New Feature
+1. Check if existing code can be extended
+2. Write the minimal implementation
+3. Add tests that verify user-facing behavior
+4. Delete any old code made obsolete
+5. Update relevant documentation
+
+### Fixing a Bug
+1. Write a failing test that reproduces the bug
+2. Fix the bug with minimal changes
+3. Verify the test passes
+4. Check if the bug reveals other dead code to remove
+
+### Refactoring
+1. Ensure tests exist for current behavior
+2. Refactor incrementally
+3. **Delete the old implementation** (don't leave both!)
+4. Remove any utilities only the old code used
+5. Verify all tests still pass
+
+## Anti-Patterns to Avoid
+
+### ❌ Don't Do This
+- Adding a library for something Node.js already provides
+- Keeping both old and new implementations "just in case"
+- Skipping tests because "it's a small change"
+- Creating generic utilities before you need them
+- Over-abstracting simple operations
+
+### ✅ Do This Instead
+- Use built-in `child_process`, `fs`, `path` modules
+- Delete old code after migration is complete
+- Add tests for every change, no matter how small
+- Write specific code for specific needs; generalize later if needed
+- Keep spawning processes simple and direct
+
+## Examples from This Codebase
+
+### Good: ForgeRunner
+- Single responsibility: manage Forge process lifecycle
+- Minimal dependencies: just Node.js built-ins + VS Code
+- Clean API: `initialize()`, `runFile()`, `kill()`
+- No shell wrapper: direct, secure process spawning
+
+### Pattern to Follow
+When you create something like `ForgeRunner` that replaces old code:
+1. ✅ Implement the new version
+2. ✅ Update all call sites
+3. ✅ Add regression tests
+4. ✅ **Delete the old implementation** (or mark parts clearly as utils-only)
+5. ✅ Remove any dependencies only the old code needed
+
+## Test Requirements
+
+Every PR must include:
+- [ ] Tests for new functionality
+- [ ] Tests for bug fixes (that would fail before the fix)
+- [ ] All existing tests pass
+- [ ] List of files deleted (if any)
+
+## Questions to Ask Before Committing
+
+1. Did I delete any files made obsolete by this change?
+2. Did I remove unused imports and dead code?
+3. Did I add tests for this change?
+4. Is this the simplest solution that could work?
+5. Does this maintain the lightweight philosophy?
+
+If you answer "no" to any of these, reconsider your approach before committing.
+
+## Language Server Development
+
+Since Forge is implemented in Racket:
+- Keep the bridge between VS Code and Racket minimal
+- Don't try to reimplement Forge logic in TypeScript
+- Focus on reliable process management and clear communication
+- Let Racket do the heavy lifting; VS Code just coordinates
+
+## Remember
+
+**Lightweight > Feature-rich**
+**Deleted code > Commented code**
+**Tested code > Clever code**
+**Simple > Generic**
