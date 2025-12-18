@@ -452,6 +452,10 @@ function forgeSymbolKindToLSP(kind: ForgeSymbolKind): SymbolKind {
 			return SymbolKind.Function;
 		case ForgeSymbolKind.Field:
 			return SymbolKind.Field;
+		case ForgeSymbolKind.Variable:
+			return SymbolKind.Variable;
+		case ForgeSymbolKind.Parameter:
+			return SymbolKind.Variable;
 		case ForgeSymbolKind.Test:
 			return SymbolKind.Method;
 		case ForgeSymbolKind.Example:
