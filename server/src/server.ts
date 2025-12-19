@@ -619,8 +619,8 @@ connection.onHover((params: HoverParams): Hover | null => {
 	
 	const word = text.substring(wordRange.start, wordRange.end);
 	
-	// Find symbol info
-	const symbol = symbols.find(s => s.name === word);
+	// Prefer a symbol that carries documentation so hover shows docstrings when available
+	const symbol = symbols.find(s => s.name === word && s.documentation) || symbols.find(s => s.name === word);
 	if (!symbol) return null;
 	
 	let hoverText = `**${symbol.kind}** \`${symbol.name}\``;
