@@ -9,7 +9,7 @@
 .gitignore
 .eslintrc.json
 
-# Build files
+# Build files - IMPORTANT: Include compiled output!
 **/tsconfig.json
 **/tsconfig.base.json
 node_modules/**
@@ -21,6 +21,9 @@ server/node_modules/**
 !client/node_modules/vscode-languageserver-types/**
 !client/node_modules/{minimatch,brace-expansion,concat-map,balanced-match}/**
 !client/node_modules/{semver,lru-cache,yallist}/**
+!server/node_modules/vscode-languageserver/**
+!server/node_modules/vscode-languageserver-textdocument/**
+!server/node_modules/antlr4ts/**
 
 # Test files
 **/test/**
@@ -32,13 +35,21 @@ scripts/e2e.sh
 contributing.md
 .travis.yml
 docs/**
-README.md
-!package.json
+!docs/README.md
 
-# ANTLR grammar source files
+# ANTLR grammar source files (compiled output is in src/parser and needed!)
 server/grammars/**/*.g4
 server/grammars/**/*.tokens
 server/grammars/**/*.interp
 
 # Scripts
 scripts/**
+
+# BUT KEEP THESE ESSENTIAL FILES:
+# - client/out/** (compiled extension code)
+# - server/out/** (compiled language server code)
+# - server/src/parser/grammars/** (ANTLR compiled parser - CRITICAL for LSP!)
+# These are automatically included since we exclude *.ts but not *.js
+!server/out/**
+!client/out/**
+!server/src/parser/**

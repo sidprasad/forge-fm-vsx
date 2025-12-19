@@ -3,7 +3,7 @@
 	"description": "Editor support for Forge FM",
 	"author": "Siddhartha Prasad",
 	"license": "MIT",
-	"version": "0.0.3",
+	"version": "0.0.4",
 	"repository": {
 		"type": "git",
 		"url": ""
@@ -178,6 +178,7 @@
 	"devDependencies": {
 		"@types/mocha": "^8.2.2",
 		"@types/node": "^12.12.0",
+		"@types/uuid": "^8.3.4",
 		"@typescript-eslint/eslint-plugin": "^4.23.0",
 		"@typescript-eslint/parser": "^4.23.0",
 		"@vscode/vsce": "^2.24.0",
@@ -193,6 +194,7 @@
 		"forge-toadus-parser": "^1.2.2",
 		"glob": "^8.1.0",
 		"ts-node": "^10.9.2",
+		"uuid": "^8.3.2",
 		"vscode-languageserver": "^9.0.1",
 		"vscode-languageserver-textdocument": "^1.0.11"
 	}
