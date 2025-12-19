@@ -24,6 +24,43 @@ const forgeEvalDiagnostics = vscode.languages.createDiagnosticCollection('Forge 
 const ANSI_CYAN = '\u001b[36m';
 const ANSI_RESET = '\u001b[0m';
 
+const severityLabels: Record<vscode.DiagnosticSeverity, string> = {
+        [DiagnosticSeverity.Error]: 'Error',
+        [DiagnosticSeverity.Warning]: 'Warning',
+        [DiagnosticSeverity.Information]: 'Info',
+        [DiagnosticSeverity.Hint]: 'Hint'
+};
+
+function formatForgeText(text: string): string {
+        const lines = text.split(/\r?\n/);
+        const formatted: string[] = [];
+        const indentUnit = '  ';
+        let indentLevel = 0;
+        const endsWithNewline = /\r?\n$/.test(text);
+
+        for (const rawLine of lines) {
+                const trimmed = rawLine.trim();
+
+                if (trimmed.length === 0) {
+                        formatted.push('');
+                        continue;
+                }
+
+                if (/^[}\])]/.test(trimmed)) {
+                        indentLevel = Math.max(indentLevel - 1, 0);
+                }
+
+                formatted.push(`${indentUnit.repeat(indentLevel)}${trimmed}`);
+
+                const openingBraces = (trimmed.match(/[({[]/g) || []).length;
+                const closingBraces = (trimmed.match(/[)}\]]/g) || []).length;
+                indentLevel = Math.max(indentLevel + openingBraces - closingBraces, 0);
+        }
+
+        const formattedText = formatted.join('\n');
+        return endsWithNewline ? `${formattedText}\n` : formattedText;
+}
+
 function appendRunHeader(output: vscode.OutputChannel, filePath: string, runId: string): void {
 	const timestamp = new Date().toISOString();
 	const fileName = path.basename(filePath);
@@ -196,20 +233,71 @@ export async function activate(context: ExtensionContext) {
 	const logger = new Logger(userid);
 
 
-	const forgeDocs = vscode.commands.registerCommand('forge.openDocumentation', async () => {
+        const forgeDocs = vscode.commands.registerCommand('forge.openDocumentation', async () => {
 
-		const DOCS_URL = 'https://csci1710.github.io/forge-documentation/home.html';
-		vscode.env.openExternal(vscode.Uri.parse(DOCS_URL))
-			.then((success) => {
+                const DOCS_URL = 'https://csci1710.github.io/forge-documentation/home.html';
+                vscode.env.openExternal(vscode.Uri.parse(DOCS_URL))
+                        .then((success) => {
 				if (!success) {
 					vscode.window.showErrorMessage(`Could not open Forge documentation from VS Code. It is available at ${DOCS_URL}`);
 				}
 			});
 	});
 
-	const showForgeOutput = vscode.commands.registerCommand('forge.showOutput', () => {
-		forgeOutput.show(true);
-	});
+        const showForgeOutput = vscode.commands.registerCommand('forge.showOutput', () => {
+                forgeOutput.show(true);
+        });
+
+        const formatDocument = vscode.commands.registerCommand('forge.formatDocument', async () => {
+                const editor = vscode.window.activeTextEditor;
+
+                if (!editor) {
+                        vscode.window.showErrorMessage('No active text editor!');
+                        return;
+                }
+
+                if (editor.document.languageId !== 'forge') {
+                        vscode.window.showInformationMessage('Open a Forge (.frg) file to format.');
+                        return;
+                }
+
+                await vscode.commands.executeCommand('editor.action.formatDocument');
+        });
+
+        const lintFile = vscode.commands.registerCommand('forge.lintFile', async () => {
+                const editor = vscode.window.activeTextEditor;
+
+                if (!editor) {
+                        vscode.window.showErrorMessage('No active text editor!');
+                        return;
+                }
+
+                if (editor.document.languageId !== 'forge') {
+                        vscode.window.showInformationMessage('Open a Forge (.frg) file to lint.');
+                        return;
+                }
+
+                await editor.document.save();
+
+                const diagnostics = vscode.languages.getDiagnostics(editor.document.uri);
+                forgeOutput.show(true);
+                forgeOutput.appendLine(`Linting "${editor.document.fileName}"...`);
+
+                if (!diagnostics.length) {
+                        forgeOutput.appendLine('✓ No issues found.');
+                        vscode.window.showInformationMessage('No Forge lint issues found.');
+                        return;
+                }
+
+                diagnostics.forEach((diagnostic) => {
+                        const severity = severityLabels[diagnostic.severity] || 'Info';
+                        const line = diagnostic.range.start.line + 1;
+                        const column = diagnostic.range.start.character + 1;
+                        forgeOutput.appendLine(`${severity} ${line}:${column} ${diagnostic.message}`);
+                });
+
+                vscode.window.showWarningMessage(`Found ${diagnostics.length} Forge issue${diagnostics.length === 1 ? '' : 's'}. Open Forge Output for details.`);
+        });
 
 	const runFile = vscode.commands.registerCommand('forge.runFile', async () => {
 		const isLoggingEnabled = context.globalState.get<boolean>('forge.isLoggingEnabled', false);
@@ -318,26 +406,40 @@ export async function activate(context: ExtensionContext) {
 		forgeRunner.kill(true);
 	});
 
-	const continueRun = vscode.commands.registerCommand('forge.continueRun', () => {
-		if (!forgeRunner.sendInput('\n')) {
-			vscode.window.showErrorMessage('No active Forge process to continue.');
-		}
+        const continueRun = vscode.commands.registerCommand('forge.continueRun', () => {
+                if (!forgeRunner.sendInput('\n')) {
+                        vscode.window.showErrorMessage('No active Forge process to continue.');
+                }
+        });
+
+
+        const enableLogging = vscode.commands.registerCommand('forge.enableLogging', () => {
+                context.globalState.update('forge.isLoggingEnabled', true);
+                vscode.commands.executeCommand('setContext', 'forge.isLoggingEnabled', true);
 	});
 
+        const disableLogging = vscode.commands.registerCommand('forge.disableLogging', () => {
+                context.globalState.update('forge.isLoggingEnabled', false);
+                vscode.commands.executeCommand('setContext', 'forge.isLoggingEnabled', false);
+        });
 
-	const enableLogging = vscode.commands.registerCommand('forge.enableLogging', () => {
-		context.globalState.update('forge.isLoggingEnabled', true);
-		vscode.commands.executeCommand('setContext', 'forge.isLoggingEnabled', true);
-	});
+        const formattingProvider = vscode.languages.registerDocumentFormattingEditProvider(
+                { language: 'forge', scheme: 'file' },
+                {
+                        provideDocumentFormattingEdits: (document) => {
+                                const fullRange = new vscode.Range(
+                                        document.positionAt(0),
+                                        document.positionAt(document.getText().length)
+                                );
 
-	const disableLogging = vscode.commands.registerCommand('forge.disableLogging', () => {
-		context.globalState.update('forge.isLoggingEnabled', false);
-		vscode.commands.executeCommand('setContext', 'forge.isLoggingEnabled', false);
-	});
+                                return [vscode.TextEdit.replace(fullRange, formatForgeText(document.getText()))];
+                        }
+                }
+        );
 
 
-	context.subscriptions.push(runFile, stopRun, continueRun, enableLogging, disableLogging, forgeEvalDiagnostics,
-		forgeOutput, forgeDocs, showForgeOutput);
+        context.subscriptions.push(runFile, stopRun, continueRun, enableLogging, disableLogging, formatDocument,
+                lintFile, forgeEvalDiagnostics, forgeOutput, forgeDocs, showForgeOutput, formattingProvider);
 
 	const codeLensProvider = new ForgeErrorCodeLensProvider(forgeEvalDiagnostics);
 	context.subscriptions.push(

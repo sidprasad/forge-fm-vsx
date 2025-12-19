@@ -18,10 +18,12 @@
 	"engines": {
 		"vscode": "^1.74.0"
 	},
-	"activationEvents": [
-		"onLanguage:forge",
-		"onCommand:forge.runFile"
-	],
+        "activationEvents": [
+                "onLanguage:forge",
+                "onCommand:forge.runFile",
+                "onCommand:forge.formatDocument",
+                "onCommand:forge.lintFile"
+        ],
 	"main": "./client/out/extension",
 	"contributes": {
 		"languages": [
@@ -125,12 +127,22 @@
 				"command": "forge.openDocumentation",
 				"title": "Forge Docs",
 				"icon": "$(book)"
-			},
-			{
-				"command": "forge.showOutput",
-				"title": "Show Forge Output",
-				"icon": "$(output)"
-			}
+                        },
+                        {
+                                "command": "forge.formatDocument",
+                                "title": "Format Forge Document",
+                                "icon": "$(wand)"
+                        },
+                        {
+                                "command": "forge.lintFile",
+                                "title": "Lint Forge File",
+                                "icon": "$(check)"
+                        },
+                        {
+                                "command": "forge.showOutput",
+                                "title": "Show Forge Output",
+                                "icon": "$(output)"
+                        }
 		],
 			"menus": {
 				"editor/title": [
@@ -158,15 +170,25 @@
 						"when": "forge.isLoggingEnabled && (editorLangId == forge)",
 						"command": "forge.disableLogging",
 						"group": "navigation@3"
-					},
-					{
-						"command": "forge.openDocumentation",
-						"when": "editorLangId == forge",
-						"group": "navigation@4"
-					}
-				]
-			}
-		},
+                                        },
+                                        {
+                                                "command": "forge.openDocumentation",
+                                                "when": "editorLangId == forge",
+                                                "group": "navigation@4"
+                                        },
+                                        {
+                                                "command": "forge.formatDocument",
+                                                "when": "editorLangId == forge",
+                                                "group": "navigation@5"
+                                        },
+                                        {
+                                                "command": "forge.lintFile",
+                                                "when": "editorLangId == forge",
+                                                "group": "navigation@6"
+                                        }
+                                ]
+                        }
+                },
 	"scripts": {
 			"vscode:prepublish": "npm run compile",
 			"compile": "tsc -b",
