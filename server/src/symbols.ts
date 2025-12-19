@@ -42,54 +42,66 @@ class SymbolExtractorVisitor extends AbstractParseTreeVisitor<void> implements F
     }
 
     /**
-     * Extract doc comment from block comments that appear before a declaration
+     * Extract the doc comment that immediately precedes a declaration.
+     * Only blocks starting with `/**` are treated as docstrings; any other
+     * comments between the doc block and the declaration will cause the doc
+     * to be ignored.
      */
     private extractDocComment(startLine: number): string | undefined {
         const lines = this.text.split('\n');
-        let docComment = '';
-        let foundComment = false;
-        
-        // Look backwards from the declaration line
-        for (let i = startLine - 1; i >= 0; i--) {
-            const line = lines[i].trim();
-            
-            // Stop if we hit a non-comment, non-empty line
-            if (line && !line.startsWith('//') && !line.startsWith('--') && !line.includes('*/') && !line.includes('/*') && !line.startsWith('*')) {
+        let currentLine = startLine - 1;
+
+        // Skip blank lines directly above the declaration
+        while (currentLine >= 0 && lines[currentLine].trim() === '') {
+            currentLine--;
+        }
+
+        if (currentLine < 0) {
+            return undefined;
+        }
+
+        // The line immediately above must be part of the doc block
+        const endLine = currentLine;
+        if (!lines[endLine].includes('*/') && !lines[endLine].includes('/**')) {
+            return undefined;
+        }
+
+        // Walk upward to find the start of the doc block
+        const docLines: string[] = [lines[endLine]];
+        let foundStart = lines[endLine].includes('/**');
+        while (!foundStart && currentLine > 0) {
+            currentLine--;
+            docLines.push(lines[currentLine]);
+            if (lines[currentLine].includes('/**')) {
+                foundStart = true;
                 break;
             }
-            
-            // Check for end of block comment
-            if (line.includes('*/')) {
-                foundComment = true;
-                const endIndex = line.indexOf('*/');
-                const content = line.substring(0, endIndex).trim();
-                if (content.startsWith('*')) {
-                    docComment = content.substring(1).trim() + (docComment ? '\n' + docComment : '');
-                } else {
-                    docComment = content + (docComment ? '\n' + docComment : '');
-                }
-            }
-            // Check for start of block comment
-            else if (line.includes('/*')) {
-                const startIndex = line.indexOf('/*');
-                const content = line.substring(startIndex + 2).trim();
-                if (content.startsWith('*')) {
-                    docComment = content.substring(1).trim() + (docComment ? '\n' + docComment : '');
-                } else {
-                    docComment = content + (docComment ? '\n' + docComment : '');
-                }
-                break; // Found start of comment, stop
-            }
-            // Middle of block comment
-            else if (foundComment && line.startsWith('*')) {
-                docComment = line.substring(1).trim() + (docComment ? '\n' + docComment : '');
-            }
-            else if (foundComment) {
-                docComment = line + (docComment ? '\n' + docComment : '');
+            // If we hit another block terminator before finding '/**', bail
+            if (lines[currentLine].includes('*/')) {
+                return undefined;
             }
         }
-        
-        return docComment.trim() || undefined;
+
+        if (!foundStart) {
+            return undefined;
+        }
+
+        // Assemble the doc block in original order
+        const rawBlock = docLines.reverse().join('\n');
+        const startIndex = rawBlock.indexOf('/**');
+        const endIndex = rawBlock.lastIndexOf('*/');
+        if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+            return undefined;
+        }
+
+        const inner = rawBlock.slice(startIndex + 3, endIndex);
+        const cleaned = inner
+            .split('\n')
+            .map(line => line.replace(/^\s*\*\s?/, '').trimEnd())
+            .join('\n')
+            .trim();
+
+        return cleaned || undefined;
     }
 
     protected defaultResult(): void {
