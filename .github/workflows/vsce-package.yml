@@ -1,23 +1,24 @@
-name: Open VSX Publish
+name: Build and Deploy Extension
 
 on:
   push:
     branches:
-      - main
+      - main  
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - run: npm ci
+
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v1
         with:
           node-version: 19
-      - run: npm ci
-      - run: npm run compile
 
-      - name: Publish to Open VSX
-        uses: HaaLeo/publish-vscode-extension@v1
+
+      - name: Publish to Visual Studio Marketplace
+        uses: HaaLeo/publish-vscode-extension@v0
         with:
-          packagePath: .
-          ovsxToken: ${{ secrets.OPENVSX_TOKEN }}
+          pat: ${{ secrets.VS_MARKETPLACE_TOKEN }}
+          registryUrl: https://marketplace.visualstudio.com
