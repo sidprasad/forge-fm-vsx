@@ -1,6 +1,6 @@
 {
-	"name": "forge-language-server",
-	"description": "Forge Language Server",
+	"name": "forge-fm",
+	"description": "Editor support for Forge FM",
 	"author": "Siddhartha Prasad",
 	"license": "MIT",
 	"version": "0.0.1",
