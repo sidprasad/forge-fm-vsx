@@ -4,6 +4,9 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { Diagnostic, DiagnosticCollection, DiagnosticSeverity } from 'vscode';
 
+const ANSI_RED = '\u001b[31m';
+const ANSI_RESET = '\u001b[0m';
+
 export interface ForgeRunOptions {
     onStdout?: (data: string) => void;
     onStderr?: (data: string) => void;
@@ -328,7 +331,7 @@ export class ForgeRunner {
      * Parse Forge error from output line and create diagnostics.
      */
     sendEvalErrors(text: string, fileURI: vscode.Uri, diagnosticCollection: DiagnosticCollection): void {
-        this.output.appendLine(text);
+        this.appendErrorOutput(text);
 
         const textLines = text.split(/[\n\r]/);
         const errorList = textLines
@@ -347,6 +350,16 @@ export class ForgeRunner {
         const linenum = errorList.length > 0 ? errorList[0].linenum : null;
         const colnum = errorList.length > 0 ? errorList[0].colnum : null;
         ForgeRunner.showFileWithOpts(fileURI.fsPath, linenum, colnum);
+    }
+
+    /**
+     * Append errors to the output channel with a clear prefix and color.
+     */
+    private appendErrorOutput(text: string): void {
+        text.split(/[\n\r]/)
+            .map((line) => line.trimEnd())
+            .filter((line) => line.length > 0)
+            .forEach((line) => this.output.appendLine(`${ANSI_RED}[error]${ANSI_RESET} ${line}`));
     }
 
     /**

@@ -21,6 +21,16 @@ const forgeOutput = vscode.window.createOutputChannel('Forge Output');
 
 const forgeEvalDiagnostics = vscode.languages.createDiagnosticCollection('Forge Eval');
 
+const ANSI_CYAN = '\u001b[36m';
+const ANSI_RESET = '\u001b[0m';
+
+function appendRunHeader(output: vscode.OutputChannel, filePath: string, runId: string): void {
+	const timestamp = new Date().toISOString();
+	const fileName = path.basename(filePath);
+	output.appendLine(`${ANSI_CYAN}[forge run]${ANSI_RESET} ${timestamp} · ${fileName} · run ${runId}`);
+	output.appendLine(`${ANSI_CYAN}────────────────────────────────────────────────${ANSI_RESET}`);
+}
+
 
 async function getUserId(context) {
 	const UID_KEY = "FORGE_UID";
@@ -67,6 +77,45 @@ function textDocumentToLog(d, focusedDoc) {
 		filename: fileName,
 		fileContent: content
 	};
+}
+
+
+
+class ForgeErrorCodeLensProvider implements vscode.CodeLensProvider {
+	private _onDidChangeCodeLenses = new vscode.EventEmitter<void>();
+	public readonly onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
+
+	constructor(private diagnostics: vscode.DiagnosticCollection) {
+		vscode.languages.onDidChangeDiagnostics((event) => {
+			const hasForgeDiagnostics = event.uris.some((uri) => this.diagnostics.has(uri));
+			if (hasForgeDiagnostics) {
+				this._onDidChangeCodeLenses.fire();
+			}
+		});
+	}
+
+	provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
+		const documentDiagnostics = this.diagnostics.get(document.uri) || [];
+		const errors = documentDiagnostics.filter((d) => d.severity === vscode.DiagnosticSeverity.Error);
+
+		if (errors.length === 0) {
+			return [];
+		}
+
+		const lenses: vscode.CodeLens[] = [];
+		for (const err of errors) {
+			lenses.push(new vscode.CodeLens(err.range, {
+				title: 'Forge: Open Output',
+				command: 'forge.showOutput'
+			}));
+			lenses.push(new vscode.CodeLens(err.range, {
+				title: 'Forge: Rerun file',
+				command: 'forge.runFile'
+			}));
+		}
+
+		return lenses;
+	}
 }
 
 
@@ -158,6 +207,10 @@ export async function activate(context: ExtensionContext) {
 			});
 	});
 
+	const showForgeOutput = vscode.commands.registerCommand('forge.showOutput', () => {
+		forgeOutput.show(true);
+	});
+
 	const runFile = vscode.commands.registerCommand('forge.runFile', async () => {
 		const isLoggingEnabled = context.globalState.get<boolean>('forge.isLoggingEnabled', false);
 		const editor = vscode.window.activeTextEditor;
@@ -171,8 +224,14 @@ export async function activate(context: ExtensionContext) {
 		const filepath = fileURI?.fsPath;
 		const runId = uuidv4();
 
-		forgeOutput.clear();
+		const forgeSettings = vscode.workspace.getConfiguration('forge');
+		const clearOutputBeforeRun = forgeSettings.get<boolean>('clearOutputBeforeRun', true);
+
+		if (clearOutputBeforeRun) {
+			forgeOutput.clear();
+		}
 		forgeOutput.show();
+		appendRunHeader(forgeOutput, filepath, runId);
 
 		// Always auto-save before any run
 		if (!editor?.document.save()) {
@@ -278,7 +337,12 @@ export async function activate(context: ExtensionContext) {
 
 
 	context.subscriptions.push(runFile, stopRun, continueRun, enableLogging, disableLogging, forgeEvalDiagnostics,
-		forgeOutput, forgeDocs);
+		forgeOutput, forgeDocs, showForgeOutput);
+
+	const codeLensProvider = new ForgeErrorCodeLensProvider(forgeEvalDiagnostics);
+	context.subscriptions.push(
+		vscode.languages.registerCodeLensProvider({ language: 'forge', scheme: 'file' }, codeLensProvider)
+	);
 
 	subscribeToDocumentChanges(context, forgeEvalDiagnostics);
 

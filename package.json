@@ -80,6 +80,12 @@
 					"type": "string",
 					"default": "3.3.0",
 					"description": "Minimum version of Forge required to run this extension."
+				},
+				"forge.clearOutputBeforeRun": {
+					"scope": "window",
+					"type": "boolean",
+					"default": true,
+					"description": "If true, clear the Forge Output channel before each run. Disable to keep a running log."
 				}
 			}
 		},
@@ -119,6 +125,11 @@
 				"command": "forge.openDocumentation",
 				"title": "Forge Docs",
 				"icon": "$(book)"
+			},
+			{
+				"command": "forge.showOutput",
+				"title": "Show Forge Output",
+				"icon": "$(output)"
 			}
 		],
 		"menus": {
