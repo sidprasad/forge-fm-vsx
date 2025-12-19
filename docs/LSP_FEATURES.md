@@ -2,7 +2,7 @@
 
 ## Overview
 
-Added lightweight Language Server Protocol features for Forge without the complexity of ANTLR. Uses regex-based symbol extraction for immediate LSP support.
+Added Language Server Protocol features for Forge backed by an ANTLR-based parser. The generated lexer/parser provides reliable symbol extraction for the LSP surface.
 
 ## Features Implemented
 
@@ -66,18 +66,10 @@ Useful for test navigation
 
 ## Implementation Details
 
-### Lightweight Approach
-Instead of full ANTLR parsing:
-- **Regex patterns** for each symbol type
-- **Line-by-line processing** of source
-- **Position tracking** for ranges
-
-**Why not ANTLR?**
-- ANTLR4 TypeScript tooling has setup complexity
-- Full parsing is overkill for LSP features
-- Regex is sufficient for well-formed Forge code
-- Much smaller dependency footprint
-- Faster compile times
+### ANTLR-Based Approach
+- Forge grammar compiled with `antlr4ts` to generate lexer/parser
+- Parse source into a CST, then walk nodes to collect symbols
+- Track ranges directly from token/ctx positions for accurate navigation
 
 ### Architecture
 
@@ -109,10 +101,9 @@ onDocumentSymbol → return all symbols
    - Only works within single file
    - Could be extended to workspace-wide symbol index
 
-2. **Regex-based parsing**
-   - May miss complex/malformed syntax
-   - Works well for standard Forge code
-   - Trade-off: simplicity vs. completeness
+2. **Grammar coverage**
+   - Grammar focuses on the commonly used language surface
+   - Exotic/less-common constructs may need additional rules
 
 3. **No semantic analysis**
    - Doesn't verify types/scopes
@@ -160,9 +151,9 @@ To test the features:
 
 ## Philosophy
 
-Follows `.clinerules`:
-- ✅ **Lightweight**: No ANTLR, just regex
-- ✅ **Simple**: 200 lines of symbol extraction
+Follows [`.clinerules`](../.clinerules):
+- ✅ **Lightweight**: ANTLR-generated parser with a small visitor
+- ✅ **Simple**: Focused symbol extraction logic
 - ✅ **Built-in APIs**: Uses VS Code LSP protocol
 - ✅ **Focused**: Core features, not every possible LSP capability
 

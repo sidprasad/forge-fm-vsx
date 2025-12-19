@@ -32,7 +32,7 @@ ForgeRunner consolidates everything into 435 lines of clean, testable code.
 **Responsibility:** Extract structural information from Forge code
 
 **Features:**
-- Regex-based parsing (sigs, predicates, functions, fields, tests)
+- ANTLR-based parsing (sigs, predicates, functions, fields, tests)
 - Position tracking for LSP features
 - Fast extraction (~1-2ms for typical files)
 
@@ -43,12 +43,10 @@ ForgeRunner consolidates everything into 435 lines of clean, testable code.
 - Functions (with return types)
 - Tests and examples
 
-**Why regex not ANTLR:**
-- ANTLR4 TypeScript tooling is complex
-- Full parsing unnecessary for LSP features
-- Regex is faster and simpler
-- Zero external dependencies
-- Works great for well-formed Forge
+**Why ANTLR:**
+- Grammar-driven parsing yields reliable structure
+- Better resilience to edge cases than ad-hoc regex
+- Keeps LSP features aligned with the language grammar
 
 ### 3. Language Server (Server-Side)
 **Location:** [`server/src/server.ts`](server/src/server.ts)
@@ -120,10 +118,17 @@ forge-language-extension-vscode/
 │       ├── server.ts             # LSP server ⭐
 │       └── symbols.ts            # Symbol extraction ⭐
 │
+├── docs/                         # Documentation
+│   ├── README.md                 # Project overview
+│   ├── ARCHITECTURE.md           # Architecture notes ⭐
+│   ├── FORGE_RUNNER.md           # ForgeRunner documentation ⭐
+│   ├── LSP_FEATURES.md           # LSP features documentation ⭐
+│   ├── ANTLR_SETUP.md            # Legacy ANTLR setup
+│   └── dev-guide.md              # Development guidance
+│
+├── README.md                     # Redirect to docs/
 ├── package.json                  # Extension manifest
-├── .clinerules                   # Development guidelines ⭐
-├── FORGE_RUNNER.md              # ForgeRunner documentation ⭐
-└── LSP_FEATURES.md              # LSP features documentation ⭐
+└── .clinerules                   # Development guidelines ⭐
 ```
 
 ⭐ = New or significantly refactored
@@ -174,21 +179,20 @@ export async function activate(context: ExtensionContext) {
 
 ## Design Principles
 
-Following [`.clinerules`](.clinerules):
+Following [`.clinerules`](../.clinerules):
 
 ### 1. Lightweight
-- No ANTLR or heavy parsing libraries
-- Minimal dependencies
+- ANTLR parser for Forge grammar
+- Minimal dependencies beyond the parser/runtime
 - Fast startup and execution
 
 ### 2. Delete Unused Code
 - ❌ Deleted: `RacketProcess` (319 lines)
-- ❌ Deleted: Unused ANTLR grammars
 - ✅ Kept: Only what's actively used
 
 ### 3. Simple Over Generic
 - Direct Racket spawning, not abstracted
-- Regex parsing, not full AST
+- Grammar-based parsing for language features
 - Focused LSP features, not every capability
 
 ### 4. Built-in APIs
@@ -225,7 +229,7 @@ Arguments are properly isolated, filenames can't inject commands.
 
 ## Testing Strategy
 
-(To be implemented per `.clinerules`)
+(To be implemented per [`.clinerules`](../.clinerules))
 
 **Unit Tests:**
 - ForgeRunner discovery logic
