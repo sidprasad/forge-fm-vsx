@@ -49,6 +49,7 @@ Smart, non-intrusive completions for Forge. Trigger with **Ctrl+Space** (Windows
 ## Commands
 
 - `Forge: Run`
+- `Forge: Run Smoke Tests`
 - `Forge: Stop`
 - `Forge: Continue Forge Run`
 - `Forge: Enable Logging`

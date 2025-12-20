@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as fs from 'fs';
 import * as vscode from 'vscode';
 import { workspace, ExtensionContext, Diagnostic, DiagnosticSeverity, DiagnosticCollection, languages } from 'vscode';
 
@@ -11,6 +12,7 @@ import {
 
 import { Logger, LogLevel, Event } from "./logger";
 import { ForgeRunner } from './forge-runner';
+import { buildSmokeTestPlan, renderSmokeTestBlock } from './smoke-tests';
 
 const os = require("os");
 import { v4 as uuidv4 } from 'uuid';
@@ -314,6 +316,142 @@ export async function activate(context: ExtensionContext) {
 		}
 	});
 
+	const runSmokeTests = vscode.commands.registerCommand('forge.runSmokeTests', async () => {
+		const isLoggingEnabled = context.globalState.get<boolean>('forge.isLoggingEnabled', false);
+		const editor = vscode.window.activeTextEditor;
+
+		if (!editor) {
+			vscode.window.showErrorMessage(`No active text editor!`);
+			return null;
+		}
+
+		const fileURI = editor.document.uri;
+		const filepath = fileURI.fsPath;
+
+		if (filepath.split(/\./).pop() !== 'frg') {
+			vscode.window.showInformationMessage('Click on the Forge file first before running smoke tests :)');
+			return null;
+		}
+
+		if (!editor.document.save()) {
+			console.error(`Could not save ${filepath}`);
+			vscode.window.showErrorMessage(`Could not save ${filepath}`);
+			return null;
+		}
+
+		const documentText = editor.document.getText();
+		const plan = buildSmokeTestPlan(documentText);
+		if (plan.predicates.length === 0) {
+			const skippedDetail = plan.skipped.length > 0
+				? ` Could not build smoke tests for: ${plan.skipped.join(', ')}.`
+				: '';
+			vscode.window.showInformationMessage(`No predicates found for smoke tests.${skippedDetail}`);
+			return null;
+		}
+
+		const forgeSettings = vscode.workspace.getConfiguration('forge');
+		const clearOutputBeforeRun = forgeSettings.get<boolean>('clearOutputBeforeRun', true);
+		const runId = uuidv4();
+
+		const tempFileName = `${path.parse(filepath).name}.forge-smoke-${runId}.frg`;
+		const tempFilePath = path.join(path.dirname(filepath), tempFileName);
+		const smokeBlock = renderSmokeTestBlock(plan.predicates);
+		const combinedContents = `${documentText}\n\n${smokeBlock}\n`;
+
+		try {
+			await fs.promises.writeFile(tempFilePath, combinedContents, 'utf8');
+		} catch (error) {
+			console.error(`Could not create smoke test file: ${error}`);
+			vscode.window.showErrorMessage(`Could not create smoke test file: ${error}`);
+			return null;
+		}
+
+		if (clearOutputBeforeRun) {
+			forgeOutput.clear();
+		}
+		forgeOutput.show();
+		appendRunHeader(forgeOutput, filepath, runId);
+		forgeOutput.appendLine(`Running smoke tests for "${path.basename(filepath)}" (${plan.predicates.length} predicate${plan.predicates.length === 1 ? '' : 's'}) ...`);
+		if (plan.skipped.length > 0) {
+			forgeOutput.appendLine(`Skipped predicates with unparsed parameters: ${plan.skipped.join(', ')}`);
+		}
+
+		let myStderr = '';
+		forgeOutput.appendLine(`Smoke tests file: ${tempFileName}`);
+
+		const stdoutListener = (data: string) => {
+			const lines = data.toString().split(/[\n]/);
+			for (const line of lines) {
+				if (line === 'Sterling running. Hit enter to stop service.') {
+					forgeOutput.appendLine('Sterling running. Hit "Continue" to stop service and continue execution.');
+				} else {
+					forgeOutput.appendLine(line);
+				}
+			}
+		};
+
+		const stderrListener = (data: string) => {
+			myStderr += data;
+		};
+
+		const exitListener = (code: number | null) => {
+			if (!forgeRunner.isKilledManually()) {
+				if (myStderr !== '') {
+					forgeOutput.appendLine('Smoke tests reported errors:');
+					forgeOutput.appendLine(myStderr);
+				} else {
+					forgeOutput.appendLine('Finished running smoke tests.');
+				}
+			} else {
+				forgeOutput.appendLine('Forge smoke test process terminated.');
+			}
+
+			ForgeRunner.showFileWithOpts(filepath, null, null);
+
+			const payload = {
+				"output-errors": myStderr,
+				"runId": runId,
+				"predicates": plan.predicates.map((p) => p.name),
+				"skippedPredicates": plan.skipped
+			};
+			logger.log_payload(payload, LogLevel.INFO, Event.FORGE_RUN_RESULT);
+		};
+
+		try {
+			await forgeRunner.runFile(tempFilePath, {
+				onStdout: stdoutListener,
+				onStderr: stderrListener,
+				onExit: exitListener
+			});
+
+			if (isLoggingEnabled && editor) {
+				const payload = {
+					"runId": runId,
+					"predicates": plan.predicates.map((p) => p.name),
+					"skippedPredicates": plan.skipped,
+					"smoke": true
+				};
+
+				logger.log_payload(payload, LogLevel.INFO, Event.FORGE_RUN);
+			}
+		} catch (error) {
+			const log = textDocumentToLog(editor.document, true);
+			log['error'] = `Could not run Forge smoke tests: ${error}`;
+			log['runId'] = runId;
+
+			logger.log_payload(log, LogLevel.ERROR, Event.FORGE_RUN);
+			vscode.window.showErrorMessage(`Could not run Forge smoke tests: ${error}`);
+			console.error("Could not run Forge smoke tests:", error);
+			return null;
+		} finally {
+			try {
+				await fs.promises.unlink(tempFilePath);
+			} catch (error) {
+				console.warn(`Could not delete smoke test file ${tempFilePath}: ${error}`);
+			}
+		}
+	});
+
 	const stopRun = vscode.commands.registerCommand('forge.stopRun', () => {
 		forgeRunner.kill(true);
 	});
@@ -336,7 +474,7 @@ export async function activate(context: ExtensionContext) {
 	});
 
 
-	context.subscriptions.push(runFile, stopRun, continueRun, enableLogging, disableLogging, forgeEvalDiagnostics,
+	context.subscriptions.push(runFile, runSmokeTests, stopRun, continueRun, enableLogging, disableLogging, forgeEvalDiagnostics,
 		forgeOutput, forgeDocs, showForgeOutput);
 
 	const codeLensProvider = new ForgeErrorCodeLensProvider(forgeEvalDiagnostics);

@@ -20,7 +20,8 @@
 	},
 	"activationEvents": [
 		"onLanguage:forge",
-		"onCommand:forge.runFile"
+		"onCommand:forge.runFile",
+		"onCommand:forge.runSmokeTests"
 	],
 	"main": "./client/out/extension",
 	"contributes": {
@@ -99,6 +100,14 @@
 				}
 			},
 			{
+				"command": "forge.runSmokeTests",
+				"title": "Run Forge Smoke Tests",
+				"icon": {
+					"light": "./client/images/run.svg",
+					"dark": "./client/images/run.svg"
+				}
+			},
+			{
 				"command": "forge.continueRun",
 				"title": "Continue Forge Run",
 				"icon": "$(debug-continue)"
@@ -138,6 +147,11 @@
 						"when": "editorLangId == forge",
 						"command": "forge.runFile",
 					"group": "navigation@0"
+				},
+				{
+					"when": "editorLangId == forge",
+					"command": "forge.runSmokeTests",
+					"group": "navigation@0.5"
 				},
 				{
 					"when": "editorLangId == forge",
