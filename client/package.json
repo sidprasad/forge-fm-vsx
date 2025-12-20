@@ -12,7 +12,9 @@
 		"vscode": "^1.52.0"
 	},
 	"dependencies": {
-		"vscode-languageclient": "^7.0.0"
+		"vscode-languageclient": "^7.0.0",
+		"firebase": "^9.15.0",
+		"@firebase/auth": "^0.21.0"
 	},
 	"devDependencies": {
 		"@types/vscode": "^1.52.0",
