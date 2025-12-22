@@ -17,7 +17,11 @@
 	"icon": "client/images/forge-logo.png",
 	"engines": {
 		"vscode": "^1.75.0"
-	}	{
+	},
+	"main": "./client/out/extension",
+	"contributes": {
+		"languages": [
+			{
 				"id": "forge",
 				"aliases": [
 					"Forge",
@@ -124,11 +128,11 @@
 				"icon": "$(output)"
 			}
 		],
-			"menus": {
-				"editor/title": [
-					{
-						"when": "editorLangId == forge",
-						"command": "forge.runFile",
+		"menus": {
+			"editor/title": [
+				{
+					"when": "editorLangId == forge",
+					"command": "forge.runFile",
 					"group": "navigation@0"
 				},
 				{
@@ -141,31 +145,31 @@
 					"command": "forge.continueRun",
 					"group": "navigation@2"
 				},
-					{
-						"command": "forge.enableLogging",
-						"when": "!forge.isLoggingEnabled && (editorLangId == forge)",
-						"group": "navigation@3"
-					},
-					{
-						"when": "forge.isLoggingEnabled && (editorLangId == forge)",
-						"command": "forge.disableLogging",
-						"group": "navigation@3"
-					},
-					{
-						"command": "forge.openDocumentation",
-						"when": "editorLangId == forge",
-						"group": "navigation@4"
-					}
-				]
-			}
-		},
+				{
+					"command": "forge.enableLogging",
+					"when": "!forge.isLoggingEnabled && (editorLangId == forge)",
+					"group": "navigation@3"
+				},
+				{
+					"when": "forge.isLoggingEnabled && (editorLangId == forge)",
+					"command": "forge.disableLogging",
+					"group": "navigation@3"
+				},
+				{
+					"command": "forge.openDocumentation",
+					"when": "editorLangId == forge",
+					"group": "navigation@4"
+				}
+			]
+		}
+	},
 	"scripts": {
-			"vscode:prepublish": "npm run compile",
-			"compile": "tsc -b",
-			"watch": "tsc -b -w",
-			"lint": "eslint ./client/src ./server/src --ext .ts,.tsx",
-			"postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
-			"test": "sh ./scripts/e2e.sh"
+		"vscode:prepublish": "npm run compile",
+		"compile": "tsc -b",
+		"watch": "tsc -b -w",
+		"lint": "eslint ./client/src ./server/src --ext .ts,.tsx",
+		"postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
+		"test": "sh ./scripts/e2e.sh"
 	},
 	"devDependencies": {
 		"@types/mocha": "^8.2.2",
@@ -175,14 +179,14 @@
 		"@typescript-eslint/parser": "^4.23.0",
 		"@vscode/vsce": "^2.24.0",
 		"eslint": "^7.26.0",
-		"mocha": "^8.4.0",
+		"mocha": "^11.7.5",
 		"typescript": "^5.3.3"
 	},
 	"dependencies": {
 		"@firebase/auth": "^0.21.0",
 		"execa": "^9.5.2",
-		"firebase": "^9.15.0",
-		"firebase-admin": "^11.4.1",
+		"firebase": "^12.7.0",
+		"firebase-admin": "^13.6.0",
 		"glob": "^8.1.0",
 		"ts-node": "^10.9.2",
 		"uuid": "^8.3.2",
