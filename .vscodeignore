@@ -21,6 +21,10 @@ server/node_modules/**
 !client/node_modules/vscode-languageserver-types/**
 !client/node_modules/{minimatch,brace-expansion,concat-map,balanced-match}/**
 !client/node_modules/{semver,lru-cache,yallist}/**
+!client/node_modules/firebase/**
+!client/node_modules/@firebase/**
+!client/node_modules/uuid/**
+!client/node_modules/forge-toadus-parser/**
 !server/node_modules/vscode-languageserver/**
 !server/node_modules/vscode-languageserver-textdocument/**
 !server/node_modules/antlr4ts/**
