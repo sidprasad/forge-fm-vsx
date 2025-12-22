@@ -16,16 +16,8 @@
 	],
 	"icon": "client/images/forge-logo.png",
 	"engines": {
-		"vscode": "^1.74.0"
-	},
-	"activationEvents": [
-		"onLanguage:forge",
-		"onCommand:forge.runFile"
-	],
-	"main": "./client/out/extension",
-	"contributes": {
-		"languages": [
-			{
+		"vscode": "^1.75.0"
+	}	{
 				"id": "forge",
 				"aliases": [
 					"Forge",
@@ -191,7 +183,6 @@
 		"execa": "^9.5.2",
 		"firebase": "^9.15.0",
 		"firebase-admin": "^11.4.1",
-		"forge-toadus-parser": "^1.2.2",
 		"glob": "^8.1.0",
 		"ts-node": "^10.9.2",
 		"uuid": "^8.3.2",
