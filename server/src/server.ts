@@ -590,17 +590,20 @@ connection.onDefinition((params: DefinitionParams): Definition | null => {
 	const word = text.substring(wordRange.start, wordRange.end);
 	
 	// Find definition of this symbol
-	const definitions = symbols.filter(s => 
-		s.name === word && 
-		(s.kind === ForgeSymbolKind.Sig || 
-		 s.kind === ForgeSymbolKind.Predicate || 
-		 s.kind === ForgeSymbolKind.Function)
-	);
-	
-	if (definitions.length === 0) return null;
-	
-	// Return first definition
-	return Location.create(params.textDocument.uri, definitions[0].range);
+        const definitions = symbols.filter(s =>
+                s.name === word &&
+                (s.kind === ForgeSymbolKind.Sig ||
+                 s.kind === ForgeSymbolKind.Predicate ||
+                 s.kind === ForgeSymbolKind.Function ||
+                 s.kind === ForgeSymbolKind.Field)
+        );
+
+        if (definitions.length === 0) return null;
+
+        // Prefer field definitions when available so field usages jump to their declarations
+        const definition = definitions.find(d => d.kind === ForgeSymbolKind.Field) || definitions[0];
+
+        return Location.create(params.textDocument.uri, definition.range);
 });
 
 // Provide hover information
@@ -619,8 +622,13 @@ connection.onHover((params: HoverParams): Hover | null => {
 	
 	const word = text.substring(wordRange.start, wordRange.end);
 	
-	// Prefer a symbol that carries documentation so hover shows docstrings when available
-	const symbol = symbols.find(s => s.name === word && s.documentation) || symbols.find(s => s.name === word);
+        const matchingSymbols = symbols.filter(s => s.name === word);
+        // Prefer documented symbols, and prioritize fields when available so hovering
+        // on sig fields shows their definitions.
+        const symbol = matchingSymbols.find(s => s.documentation && s.kind === ForgeSymbolKind.Field) ||
+                matchingSymbols.find(s => s.documentation) ||
+                matchingSymbols.find(s => s.kind === ForgeSymbolKind.Field) ||
+                matchingSymbols[0];
 	if (!symbol) return null;
 	
 	let hoverText = `**${symbol.kind}** \`${symbol.name}\``;

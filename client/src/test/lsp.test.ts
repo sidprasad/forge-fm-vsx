@@ -24,12 +24,19 @@ suite('LSP: Go to Definition', () => {
 		]);
 	});
 
-	test('Should go to function definition', async () => {
-		await testGoToDefinition(docUri, new vscode.Position(52, 8), [
-			// Position of "getFriends" usage
-			{ uri: docUri, range: toRange(52, 4, 52, 14) } // fun getFriends
-		]);
-	});
+        test('Should go to function definition', async () => {
+                await testGoToDefinition(docUri, new vscode.Position(52, 8), [
+                        // Position of "getFriends" usage
+                        { uri: docUri, range: toRange(52, 4, 52, 14) } // fun getFriends
+                ]);
+        });
+
+        test('Should go to field definition', async () => {
+                await testGoToDefinition(docUri, new vscode.Position(59, 8), [
+                        // Position of "friends" usage in function body
+                        { uri: docUri, range: toRange(11, 4, 11, 11) } // friends field in Person
+                ]);
+        });
 });
 
 suite('LSP: Hover Information', () => {
@@ -47,11 +54,17 @@ suite('LSP: Hover Information', () => {
 		});
 	});
 
-	test('Should show hover for function', async () => {
-		await testHover(docUri, new vscode.Position(52, 8), {
-			contents: ['**function** `getFriends`']
-		});
-	});
+        test('Should show hover for function', async () => {
+                await testHover(docUri, new vscode.Position(52, 8), {
+                        contents: ['**function** `getFriends`']
+                });
+        });
+
+        test('Should show hover for field', async () => {
+                await testHover(docUri, new vscode.Position(11, 8), {
+                        contents: ['**field** `friends`', 'field in Person: set Person']
+                });
+        });
 });
 
 suite('LSP: Document Symbols', () => {
