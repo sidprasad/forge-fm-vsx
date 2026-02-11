@@ -22,14 +22,18 @@ const forgeOutput = vscode.window.createOutputChannel('Forge Output');
 
 const forgeEvalDiagnostics = vscode.languages.createDiagnosticCollection('Forge Eval');
 
-const ANSI_CYAN = '\u001b[36m';
-const ANSI_RESET = '\u001b[0m';
+/**
+ * Strip ANSI escape codes from a string.
+ */
+function stripAnsi(text: string): string {
+	return text.replace(/\u001b\[[0-9;]*m/g, '');
+}
 
 function appendRunHeader(output: vscode.OutputChannel, filePath: string, runId: string): void {
-	const timestamp = new Date().toISOString();
+	const timestamp = new Date().toLocaleTimeString();
 	const fileName = path.basename(filePath);
-	output.appendLine(`${ANSI_CYAN}[forge run]${ANSI_RESET} ${timestamp} · ${fileName} · run ${runId}`);
-	output.appendLine(`${ANSI_CYAN}────────────────────────────────────────────────${ANSI_RESET}`);
+	output.appendLine(`[forge run] ${timestamp} · ${fileName}`);
+	output.appendLine('────────────────────────────────────────────────');
 }
 
 
@@ -252,7 +256,7 @@ export async function activate(context: ExtensionContext) {
 		forgeOutput.appendLine(`Running file "${filepath}" ...`);
 
 		const stdoutListener = (data: string) => {
-			const lines = data.toString().split(/[\n]/);
+			const lines = stripAnsi(data.toString()).split(/[\n]/);
 			for (const line of lines) {
 				if (line === 'Sterling running. Hit enter to stop service.') {
 					forgeOutput.appendLine('Sterling running. Hit "Continue" to stop service and continue execution.');
