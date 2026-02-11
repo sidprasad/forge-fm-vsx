@@ -4,8 +4,12 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { Diagnostic, DiagnosticCollection, DiagnosticSeverity } from 'vscode';
 
-const ANSI_RED = '\u001b[31m';
-const ANSI_RESET = '\u001b[0m';
+/**
+ * Strip ANSI escape codes from a string.
+ */
+function stripAnsi(text: string): string {
+    return text.replace(/\u001b\[[0-9;]*m/g, '');
+}
 
 export interface ForgeRunOptions {
     onStdout?: (data: string) => void;
@@ -353,13 +357,13 @@ export class ForgeRunner {
     }
 
     /**
-     * Append errors to the output channel with a clear prefix and color.
+     * Append errors to the output channel with a clear prefix.
      */
     private appendErrorOutput(text: string): void {
-        text.split(/[\n\r]/)
+        stripAnsi(text).split(/[\n\r]/)
             .map((line) => line.trimEnd())
             .filter((line) => line.length > 0)
-            .forEach((line) => this.output.appendLine(`${ANSI_RED}[error]${ANSI_RESET} ${line}`));
+            .forEach((line) => this.output.appendLine(`[error] ${line}`));
     }
 
     /**
