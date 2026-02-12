@@ -3,7 +3,7 @@
 	"description": "Editor support for Forge FM",
 	"author": "Siddhartha Prasad",
 	"license": "MIT",
-	"version": "0.0.11",
+	"version": "0.1.0",
 	"repository": {
 		"type": "git",
 		"url": ""
@@ -16,13 +16,32 @@
 	],
 	"icon": "client/images/forge-logo.png",
 	"engines": {
-		"vscode": "^1.75.0"
+		"vscode": "^1.93.0"
 	},
 	"activationEvents": [
 		"onLanguage:forge"
 	],
 	"main": "./client/out/extension",
 	"contributes": {
+		"chatParticipants": [
+			{
+				"id": "forge-fm.forge-assistant",
+				"fullName": "Forge Assistant",
+				"name": "forge",
+				"description": "Ask questions about the Forge modeling language, get help with syntax, debug your models, and explore documentation.",
+				"isSticky": true,
+				"commands": [
+					{
+						"name": "docs",
+						"description": "Look up Forge documentation for a specific topic"
+					},
+					{
+						"name": "explain",
+						"description": "Explain Forge code or concepts in your current file"
+					}
+				]
+			}
+		],
 		"languages": [
 			{
 				"id": "forge",
