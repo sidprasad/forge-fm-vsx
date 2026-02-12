@@ -12,6 +12,7 @@ import {
 
 import { Logger, LogLevel, Event } from "./logger";
 import { ForgeRunner } from './forge-runner';
+import { registerForgeChat } from './forge-chat-participant';
 
 const os = require("os");
 import { v4 as uuidv4 } from 'uuid';
@@ -343,6 +344,9 @@ export async function activate(context: ExtensionContext) {
 
 	context.subscriptions.push(runFile, stopRun, continueRun, enableLogging, disableLogging, forgeEvalDiagnostics,
 		forgeOutput, forgeDocs, showForgeOutput);
+
+	// Register @forge chat participant (requires GitHub Copilot)
+	registerForgeChat(context);
 
 	const codeLensProvider = new ForgeErrorCodeLensProvider(forgeEvalDiagnostics);
 	context.subscriptions.push(
