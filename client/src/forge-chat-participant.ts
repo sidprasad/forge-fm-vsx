@@ -193,19 +193,19 @@ function addHistoryToMessages(
     messages: vscode.LanguageModelChatMessage[],
     chatContext: vscode.ChatContext
 ): void {
-    const previousMessages = chatContext.history.filter(
-        (h) => h instanceof vscode.ChatResponseTurn
-    );
-
-    for (const turn of previousMessages) {
-        let fullMessage = '';
-        for (const part of turn.response) {
-            if (part instanceof vscode.ChatResponseMarkdownPart) {
-                fullMessage += part.value.value;
+    for (const turn of chatContext.history) {
+        if (turn instanceof vscode.ChatRequestTurn) {
+            messages.push(vscode.LanguageModelChatMessage.User(turn.prompt));
+        } else if (turn instanceof vscode.ChatResponseTurn) {
+            let fullMessage = '';
+            for (const part of turn.response) {
+                if (part instanceof vscode.ChatResponseMarkdownPart) {
+                    fullMessage += part.value.value;
+                }
             }
-        }
-        if (fullMessage) {
-            messages.push(vscode.LanguageModelChatMessage.Assistant(fullMessage));
+            if (fullMessage) {
+                messages.push(vscode.LanguageModelChatMessage.Assistant(fullMessage));
+            }
         }
     }
 }
