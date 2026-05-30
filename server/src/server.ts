@@ -20,15 +20,17 @@ import {
 	HoverParams,
 	Hover,
 	MarkupKind,
-	InsertTextFormat,
-	CancellationTokenSource
+	InsertTextFormat
 } from 'vscode-languageserver/node';
 
 import {
 	TextDocument
 } from 'vscode-languageserver-textdocument';
+import { ChildProcess, spawn } from 'child_process';
+import * as path from 'path';
+import * as net from 'net';
+import { Buffer } from 'buffer';
 import { ForgeSymbolExtractor, ForgeSymbol, SymbolKind as ForgeSymbolKind } from './symbols';
-import { ForgeWorker, WorkerDiagnostic } from './forge-worker';
 
 // Create a connection for the server, using Node's IPC as a transport.
 // Also include all preview / proposed LSP features.
@@ -36,6 +38,7 @@ const connection = createConnection(ProposedFeatures.all);
 
 // Create a simple text document manager.
 const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
+const racket = spawnRacket();
 
 let hasConfigurationCapability = false;
 let hasWorkspaceFolderCapability = false;
@@ -120,7 +123,7 @@ connection.onDidChangeConfiguration(change => {
 	}
 
 	// Revalidate all open text documents
-	documents.all().forEach(scheduleValidation);
+	documents.all().forEach(validateTextDocument);
 });
 
 function getDocumentSettings(resource: string): Thenable<ExampleSettings> {
@@ -138,111 +141,160 @@ function getDocumentSettings(resource: string): Thenable<ExampleSettings> {
 	return result;
 }
 
-// --- Forge worker: persistent Racket subprocess for syntax checking ---
-
-let forgeWorker: ForgeWorker | null = null;
-let forgeWorkerInit: Promise<void> | null = null;
-
-function ensureForgeWorker(): Promise<void> {
-	if (forgeWorkerInit) return forgeWorkerInit;
-	forgeWorkerInit = (async () => {
-		const cfg = await connection.workspace.getConfiguration({ section: 'forge' }).catch(() => null);
-		const configuredRacket = cfg && typeof cfg.racketPath === 'string' ? cfg.racketPath : undefined;
-		try {
-			forgeWorker = await ForgeWorker.create(configuredRacket, (m) => connection.console.log(m));
-		} catch (err) {
-			connection.console.error(`Failed to start forge worker: ${(err as Error).message}`);
-			throw err;
-		}
-	})();
-	return forgeWorkerInit;
+function spawnRacket(): ChildProcess {
+	// spawn racket
+	const syntaxCheck = path.resolve(__dirname, '../src/syntax_check.rkt');
+	const racket = spawn('racket', [`"${syntaxCheck}"`], { shell: true });
+	if (!racket) {
+		connection.console.error('Cannot launch racket');
+		throw new Error('Cannot launch racket');
+	}
+	// if (racket.stderr) {
+	// 	racket.stderr.on('data', (data: string) => {
+	// 		connection.console.log(`Racket data: ${data}`);
+	// 	});
+	// }
+	// connection.console.log("Successfully spawned Racket");
+	return racket;
 }
 
-// Per-URI debounce + cancellation plumbing.
-const DEBOUNCE_MS = 200;
-type PerDoc = { timer?: NodeJS.Timeout; cts?: CancellationTokenSource };
-const perDoc = new Map<string, PerDoc>();
-
-function scheduleValidation(document: TextDocument): void {
-	const uri = document.uri;
-	const entry = perDoc.get(uri) ?? {};
-	if (entry.timer) clearTimeout(entry.timer);
-	if (entry.cts) { entry.cts.cancel(); entry.cts.dispose(); }
-	entry.cts = new CancellationTokenSource();
-	const token = entry.cts.token;
-	entry.timer = setTimeout(() => {
-		entry.timer = undefined;
-		void validateTextDocument(document, token);
-	}, DEBOUNCE_MS);
-	perDoc.set(uri, entry);
-}
-
-function clearValidation(uri: string): void {
-	const entry = perDoc.get(uri);
-	if (!entry) return;
-	if (entry.timer) clearTimeout(entry.timer);
-	if (entry.cts) { entry.cts.cancel(); entry.cts.dispose(); }
-	perDoc.delete(uri);
-}
-
+// Only keep settings for open documents
 documents.onDidClose(e => {
 	documentSettings.delete(e.document.uri);
-	clearValidation(e.document.uri);
-	connection.sendDiagnostics({ uri: e.document.uri, diagnostics: [] });
 });
 
+// The content of a text document has changed. This event is emitted
+// when the text document first opened or when its content has changed.
 documents.onDidChangeContent(change => {
-	scheduleValidation(change.document);
+	validateTextDocument(change.document);
 });
 
-async function validateTextDocument(textDocument: TextDocument, token: import('vscode-languageserver/node').CancellationToken): Promise<void> {
-	try {
-		await ensureForgeWorker();
-	} catch {
-		return; // error already logged
-	}
-	if (token.isCancellationRequested || !forgeWorker) return;
+let waitingForRacket = true;
+setTimeout(() => waitingForRacket = false, 3 * 1000); // need about ~2 second but to be safe here
+
+let timestamp = Date.now();
+
+async function validateTextDocument(textDocument: TextDocument): Promise<void> {
+
+	// connection.console.log(`${Diagnostics.get(textDocument.uri)}`);
+	if (waitingForRacket) return;
+	// const settings = await getDocumentSettings(textDocument.uri);
+	// when validate is called, we assign this validation a timestamp
+	const myTimestamp = Date.now();
+	timestamp = myTimestamp;
 
 	const text = textDocument.getText();
-	let workerDiags: WorkerDiagnostic[];
-	try {
-		workerDiags = await forgeWorker.check(text, token);
-	} catch (err) {
-		connection.console.log(`forge worker check failed: ${(err as Error).message}`);
-		return;
-	}
-	if (token.isCancellationRequested) return;
+	const buf = Buffer.alloc(4);
+	buf.writeUInt32LE(text.length, 0);
 
-	const diagnostics: Diagnostic[] = workerDiags.map((d) => {
-		// Worker reports 1-indexed lines, 0-indexed columns. LSP wants 0/0.
-		const startLine = Math.max(0, d.line - 1);
-		const startCol = Math.max(0, d.column);
-		const endCol = startCol + Math.max(1, d.span);
-		const diagnostic: Diagnostic = {
-			severity: d.severity === 'warning' ? DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
-			range: {
-				start: { line: startLine, character: startCol },
-				end:   { line: startLine, character: endCol },
-			},
-			message: d.message,
-			source: 'forge',
-		};
-		if (hasDiagnosticRelatedInformationCapability) {
-			diagnostic.relatedInformation = [{
-				location: { uri: textDocument.uri, range: { ...diagnostic.range } },
-				message: d.message,
-			}];
+	const diagnostics: Diagnostic[] = [];
+
+	let myStderr = '\n';
+	// connection.console.log(">>>>>>>>>> Connecting to socket");
+	const so = new net.Socket();
+	so.connect(8879, 'localhost');
+
+	so.on('error', function (error) { connection.console.log(`client received error: ${error.toString()}`); });
+	so.on('connect', function () {
+		// connection.console.log("Connected to the socket");
+		// it is possible that when we connect, there are already new validation being assigned
+		// in this case we want to quit to allow others to enter the socket
+		if (myTimestamp < timestamp) {
+			// connection.console.log(`oops I connected too late: current timestamp is ${timestamp}, my timestamp is ${myTimestamp}`);
+			so.end();
+			so.destroy();
+		} else {
+			so.write(buf);
+			// connection.console.log(`>>>>>>>>  text size is: ${text.length} ${buf}`);
+			so.write(text);
+			// connection.console.log("write text to the racket server");
 		}
-		return diagnostic;
 	});
+	so.on('data', function (data) {
+		if (myTimestamp < timestamp) {
+			// connection.console.log(`oops my data arrived too late: current timestamp is ${timestamp}, my timestamp is ${myTimestamp}`);
+			so.end();
+			so.destroy();
+		} else {
+			myStderr += data;
+			connection.console.log(data.toString());
+			// connection.console.log(">>>>>>>>>> Ending socket");
+			so.end();
+			so.destroy();
 
+			// when racket finishes eval, we parse the received stderr and send diagnostics to client
+			if (myStderr !== '\n') {
+				let start = 0;
+				let end = 0;
+
+				const line_match = /line=(\d+)/.exec(myStderr);
+				const column_match = /column=(\d+)/.exec(myStderr);
+				// let offset_match = parser(myStderr, /offset=(\d+)/);
+
+				let line_num = 0;
+				let col_num = 0;
+
+				// the stderr could be tokenization issues
+				if (line_match !== null && column_match !== null) {
+					// connection.console.log(`line match: ${line_match[0]}, col match: ${column_match[0]}`);
+					// racket line/col num starts from 0
+					line_num = parseInt(line_match[0].slice('line='.length));
+					col_num = parseInt(column_match[0].slice('column='.length));
+				}
+
+				// } else {
+				// 	// for now this would not happen
+				// 	const special_match = /frg:(\d+):(\d+):/.exec(myStderr);
+				// 	if (special_match !== null) {
+				// 		line_num = parseInt(special_match[1]);
+				// 		col_num = parseInt(special_match[2]);
+				// 	}
+				// }
+
+				// if we get some line/col number, we want to get the start and end of the error
+				if (line_num !== 0) {
+					// connection.console.log(`line num: ${line_num}, col num: ${col_num}`);
+					let m: RegExpExecArray | null;
+					// iterate over each line
+					const pattern = /(.*[\n\r\w])/g; // include the new line char and eof
+					while (line_num > 0 && (m = pattern.exec(text))) {
+						// connection.console.log(`match: ${m[0]}, ${m.index}, ${m[0].length}`);
+						start = m.index + col_num;
+						end = m.index + m[0].length;
+						line_num -= 1;
+					}
+					// connection.console.log(`start: ${start}, end: ${end}`);
+				}
+
+				const diagnostic: Diagnostic = {
+					severity: DiagnosticSeverity.Warning,
+					range: {
+						start: textDocument.positionAt(start),
+						end: textDocument.positionAt(end)
+					},
+					message: `Forge Syntax Error: ${myStderr}`,
+					source: 'syntax_check.rkt'
+				};
+				if (hasDiagnosticRelatedInformationCapability) {
+					diagnostic.relatedInformation = [
+						{
+							location: {
+								uri: textDocument.uri,
+								range: Object.assign({}, diagnostic.range)
+							},
+							message: `${myStderr}`
+						}
+					];
+				}
+				diagnostics.push(diagnostic);
+			}
+			// Send the computed diagnostics to VSCode.
+			connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
+		}
+	});
+	// Send the computed diagnostics to VSCode.
 	connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
 }
-
-connection.onExit(() => {
-	for (const uri of Array.from(perDoc.keys())) clearValidation(uri);
-	void forgeWorker?.dispose();
-});
 
 connection.onDidChangeWatchedFiles(_change => {
 	// Monitored files have change in VSCode
@@ -482,6 +534,12 @@ connection.onCompletionResolve(
 	}
 );
 
+connection.onExit(() => {
+	// kill racket
+	if (racket) {
+		racket.kill('SIGTERM');
+	}
+});
 
 // Make the text document manager listen on the connection
 // for open, change and close text document events
