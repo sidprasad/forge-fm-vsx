@@ -105,6 +105,10 @@ export function registerForgeTests(
 			if (!fileItem.uri) {
 				continue;
 			}
+			// Honor a file-level exclusion (e.g. "run everything except this file").
+			if (request.exclude?.includes(fileItem)) {
+				continue;
+			}
 			const tests: vscode.TestItem[] = [];
 			fileItem.children.forEach(c => { if (!request.exclude?.includes(c)) { tests.push(c); } });
 			if (tests.length === 0) {
