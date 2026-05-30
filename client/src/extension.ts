@@ -13,6 +13,7 @@ import {
 import { Logger, LogLevel, Event } from "./logger";
 import { ForgeRunner } from './forge-runner';
 import { registerForgeChat } from './forge-chat-participant';
+import { findSterlingPorts, openSterlingWebview, disposeSterlingWebview } from './sterling-webview';
 
 const os = require("os");
 import { v4 as uuidv4 } from 'uuid';
@@ -256,9 +257,31 @@ export async function activate(context: ExtensionContext) {
 		let myStderr = '';
 		forgeOutput.appendLine(`Running file "${filepath}" ...`);
 
+		// If the user wants Sterling in a VS Code webview, pin the Sterling ports and force
+		// headless mode so Forge serves the visualizer without opening the system browser.
+		const useWebview = forgeSettings.get<string>('openSterlingIn', 'browser') === 'webview';
+		let extraArgs: string[] | undefined;
+		let sterlingUrl: string | undefined;
+		let sterlingWebviewOpened = false;
+		if (useWebview) {
+			const { staticPort, providerPort } = await findSterlingPorts();
+			extraArgs = [
+				'-O', 'run_sterling', 'headless',
+				'-O', 'sterling_static_port', String(staticPort),
+				'-O', 'sterling_port', String(providerPort),
+			];
+			sterlingUrl = `http://127.0.0.1:${staticPort}/?${providerPort}`;
+		}
+
 		const stdoutListener = (data: string) => {
 			const lines = stripAnsi(data.toString()).split(/[\n]/);
 			for (const line of lines) {
+				// Once the static server is up, Forge prints "... (static server port=N) ...".
+				// Open the webview at that point so the iframe loads against a live server.
+				if (useWebview && sterlingUrl && !sterlingWebviewOpened && line.includes('static server port=')) {
+					sterlingWebviewOpened = true;
+					void openSterlingWebview(sterlingUrl, forgeRunner);
+				}
 				if (line === 'Sterling running. Hit enter to stop service.') {
 					forgeOutput.appendLine('Sterling running. Hit "Continue" to stop service and continue execution.');
 				} else {
@@ -272,6 +295,10 @@ export async function activate(context: ExtensionContext) {
 		};
 
 		const exitListener = (code: number | null) => {
+			// The Sterling servers die with the Forge process; close the (now-dead) webview.
+			if (useWebview) {
+				disposeSterlingWebview();
+			}
 			if (!forgeRunner.isKilledManually()) {
 				if (myStderr !== '') {
 					forgeRunner.sendEvalErrors(myStderr, fileURI, forgeEvalDiagnostics);
@@ -296,7 +323,8 @@ export async function activate(context: ExtensionContext) {
 			await forgeRunner.runFile(filepath, {
 				onStdout: stdoutListener,
 				onStderr: stderrListener,
-				onExit: exitListener
+				onExit: exitListener,
+				extraArgs
 			});
 
 			if (isLoggingEnabled && editor) {

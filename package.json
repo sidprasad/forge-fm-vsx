@@ -104,6 +104,20 @@
 					"type": "boolean",
 					"default": true,
 					"description": "If true, clear the Forge Output channel before each run. Disable to keep a running log."
+				},
+				"forge.openSterlingIn": {
+					"scope": "resource",
+					"type": "string",
+					"enum": [
+						"browser",
+						"webview"
+					],
+					"enumDescriptions": [
+						"Open the Sterling visualizer in your system's default web browser (default).",
+						"Open the Sterling visualizer in a VS Code panel. Forces this run into headless mode (overrides 'option run_sterling' in the file) so no browser window opens."
+					],
+					"default": "browser",
+					"description": "Where to display the Sterling visualizer when a Forge run produces an instance."
 				}
 			}
 		},

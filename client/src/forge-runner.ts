@@ -15,6 +15,9 @@ export interface ForgeRunOptions {
     onStdout?: (data: string) => void;
     onStderr?: (data: string) => void;
     onExit?: (code: number | null) => void;
+    // Extra command-line arguments passed to `racket <file>` after the file path.
+    // Forge parses these (see its `-o`/`-O` option flags), e.g. to force headless Sterling.
+    extraArgs?: string[];
 }
 
 export interface ForgeErrorLocation {
@@ -216,8 +219,9 @@ export class ForgeRunner {
         return new Promise((resolve, reject) => {
             const racketPath = this.environment!.racketPath;
 
-            // Spawn Racket process with file
-            this.currentProcess = spawn(racketPath, [filePath], {
+            // Spawn Racket process with file. Any extraArgs are passed to Forge as
+            // command-line arguments after the file path (e.g. `-O run_sterling headless`).
+            this.currentProcess = spawn(racketPath, [filePath, ...(options.extraArgs ?? [])], {
                 cwd: path.dirname(filePath),
                 env: { ...process.env }
             });
