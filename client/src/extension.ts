@@ -259,7 +259,7 @@ export async function activate(context: ExtensionContext) {
 
 		// If the user wants Sterling in a VS Code webview, pin the Sterling ports and force
 		// headless mode so Forge serves the visualizer without opening the system browser.
-		const useWebview = forgeSettings.get<string>('openSterlingIn', 'browser') === 'webview';
+		const useWebview = forgeSettings.get<string>('openSterlingIn', 'webview') === 'webview';
 		let extraArgs: string[] | undefined;
 		let sterlingUrl: string | undefined;
 		let sterlingWebviewOpened = false;
