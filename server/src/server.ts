@@ -20,7 +20,8 @@ import {
 	HoverParams,
 	Hover,
 	MarkupKind,
-	InsertTextFormat
+	InsertTextFormat,
+	Range
 } from 'vscode-languageserver/node';
 
 import {
@@ -573,6 +574,33 @@ connection.onDocumentSymbol((params: DocumentSymbolParams): SymbolInformation[] 
 	}));
 });
 
+// Custom request: the runnable items (named tests, examples, run/check commands) in a
+// document. The client's Test Explorer and "Run" CodeLens use this. `range` anchors the
+// item on the name/keyword; `fullRange` is the whole construct's span.
+interface ForgeRunnable {
+	name: string;
+	kind: string;
+	range: Range;
+	fullRange: Range;
+	detail?: string;
+}
+connection.onRequest('forge/runnables', (params: { uri: string }): ForgeRunnable[] => {
+	const symbols = documentSymbols.get(params.uri) ?? [];
+	return symbols
+		.filter(s =>
+			s.kind === ForgeSymbolKind.Test ||
+			s.kind === ForgeSymbolKind.Example ||
+			s.kind === ForgeSymbolKind.Command
+		)
+		.map(s => ({
+			name: s.name,
+			kind: s.kind,
+			range: s.range,
+			fullRange: s.fullRange ?? s.range,
+			detail: s.detail
+		}));
+});
+
 // Provide go-to-definition
 connection.onDefinition((params: DefinitionParams): Definition | null => {
 	const document = documents.get(params.textDocument.uri);
@@ -666,6 +694,8 @@ function forgeSymbolKindToLSP(kind: ForgeSymbolKind): SymbolKind {
 			return SymbolKind.Method;
 		case ForgeSymbolKind.Example:
 			return SymbolKind.Constant;
+		case ForgeSymbolKind.Command:
+			return SymbolKind.Event;
 		default:
 			return SymbolKind.Variable;
 	}

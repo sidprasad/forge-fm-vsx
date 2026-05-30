@@ -3,7 +3,7 @@
 	"description": "Editor support for Forge FM",
 	"author": "Siddhartha Prasad",
 	"license": "MIT",
-	"version": "0.2.0",
+	"version": "0.2.1",
 	"repository": {
 		"type": "git",
 		"url": ""
@@ -118,13 +118,20 @@
 					],
 					"default": "webview",
 					"description": "Where to display the Sterling visualizer when a Forge run produces an instance."
+				},
+				"forge.telemetry.enabled": {
+					"scope": "window",
+					"type": "boolean",
+					"default": true,
+					"description": "Send anonymous usage telemetry (Forge runs and errors) to help improve the extension."
 				}
 			}
 		},
 		"commands": [
 			{
 				"command": "forge.runFile",
-				"title": "Run Forge",
+				"title": "Run",
+				"category": "Forge",
 				"icon": {
 					"light": "./client/images/run.svg",
 					"dark": "./client/images/run.svg"
@@ -132,12 +139,14 @@
 			},
 			{
 				"command": "forge.continueRun",
-				"title": "Continue Forge Run",
+				"title": "Stop Sterling & Continue",
+				"category": "Forge",
 				"icon": "$(debug-continue)"
 			},
 			{
 				"command": "forge.stopRun",
-				"title": "Stop Forge",
+				"title": "Stop",
+				"category": "Forge",
 				"icon": {
 					"light": "./client/images/stop.svg",
 					"dark": "./client/images/stop.svg"
@@ -146,50 +155,52 @@
 			{
 				"command": "forge.enableLogging",
 				"title": "Enable Logging",
+				"category": "Forge",
 				"icon": "$(eye-closed)"
 			},
 			{
 				"command": "forge.disableLogging",
 				"title": "Disable Logging",
+				"category": "Forge",
 				"icon": "$(eye)"
 			},
 			{
 				"command": "forge.openDocumentation",
-				"title": "Forge Docs",
+				"title": "Open Documentation",
+				"category": "Forge",
 				"icon": "$(book)"
 			},
 			{
 				"command": "forge.showOutput",
-				"title": "Show Forge Output",
+				"title": "Show Output",
+				"category": "Forge",
 				"icon": "$(output)"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "forge.runFile",
+				"key": "ctrl+alt+n",
+				"mac": "cmd+alt+n",
+				"when": "editorLangId == forge && editorTextFocus"
 			}
 		],
 		"menus": {
 			"editor/title": [
 				{
-					"when": "editorLangId == forge",
+					"when": "editorLangId == forge && !forge.isRunning",
 					"command": "forge.runFile",
 					"group": "navigation@0"
 				},
 				{
-					"when": "editorLangId == forge",
+					"when": "editorLangId == forge && forge.isRunning",
 					"command": "forge.stopRun",
 					"group": "navigation@1"
 				},
 				{
-					"when": "editorLangId == forge",
+					"when": "editorLangId == forge && forge.sterlingWaiting",
 					"command": "forge.continueRun",
 					"group": "navigation@2"
-				},
-				{
-					"command": "forge.enableLogging",
-					"when": "!forge.isLoggingEnabled && (editorLangId == forge)",
-					"group": "navigation@3"
-				},
-				{
-					"when": "forge.isLoggingEnabled && (editorLangId == forge)",
-					"command": "forge.disableLogging",
-					"group": "navigation@3"
 				},
 				{
 					"command": "forge.openDocumentation",

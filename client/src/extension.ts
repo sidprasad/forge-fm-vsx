@@ -14,6 +14,8 @@ import { Logger, LogLevel, Event } from "./logger";
 import { ForgeRunner } from './forge-runner';
 import { registerForgeChat } from './forge-chat-participant';
 import { findSterlingPorts, openSterlingWebview, disposeSterlingWebview } from './sterling-webview';
+import * as statusBar from './status-bar';
+import { registerForgeTests } from './forge-tests';
 
 const os = require("os");
 import { v4 as uuidv4 } from 'uuid';
@@ -36,6 +38,22 @@ function appendRunHeader(output: vscode.OutputChannel, filePath: string, runId: 
 	const fileName = path.basename(filePath);
 	output.appendLine(`[forge run] ${timestamp} · ${fileName}`);
 	output.appendLine('────────────────────────────────────────────────');
+}
+
+/**
+ * Drive the `forge.isRunning` context key used to gate the editor-title toolbar
+ * (Run shows when idle; Stop/Continue show only while a run is active).
+ */
+function setForgeRunning(running: boolean): void {
+	vscode.commands.executeCommand('setContext', 'forge.isRunning', running);
+}
+
+/**
+ * Drive the `forge.sterlingWaiting` context key — true while a run is paused waiting on the
+ * Sterling visualizer, which is exactly when the "Stop Sterling & Continue" button applies.
+ */
+function setForgeSterlingWaiting(waiting: boolean): void {
+	vscode.commands.executeCommand('setContext', 'forge.sterlingWaiting', waiting);
 }
 
 
@@ -129,26 +147,52 @@ class ForgeErrorCodeLensProvider implements vscode.CodeLensProvider {
 
 export async function activate(context: ExtensionContext) {
 
+	// Status bar reflects toolchain + run state alongside the output channel.
+	statusBar.initStatusBar(context);
+	statusBar.setStarting();
+
 	// Initialize Forge runner
 	const forgeRunner = ForgeRunner.getInstance(forgeOutput);
-	
+	setForgeRunning(false);
+
 	try {
 		await forgeRunner.initialize();
-		
+
+		const env = forgeRunner.getEnvironment();
+		if (env) {
+			statusBar.setEnvironmentReady(env);
+		}
+
 		// Check minimum version
 		const currentSettings = vscode.workspace.getConfiguration('forge');
 		const minSupportedVersion = String(currentSettings.get<string>('minVersion'));
-		
+
 		const meetsMinVersion = await forgeRunner.checkMinVersion(minSupportedVersion);
 		if (!meetsMinVersion) {
-			const env = forgeRunner.getEnvironment();
-			vscode.window.showWarningMessage(
-				`Forge version ${env?.forgeVersion} may not meet minimum requirement ${minSupportedVersion}`
+			const choice = await vscode.window.showWarningMessage(
+				`Forge version ${env?.forgeVersion} may not meet minimum requirement ${minSupportedVersion}`,
+				'Open Settings', 'Forge Docs'
 			);
+			if (choice === 'Open Settings') {
+				vscode.commands.executeCommand('workbench.action.openSettings', 'forge.minVersion');
+			} else if (choice === 'Forge Docs') {
+				vscode.commands.executeCommand('forge.openDocumentation');
+			}
 		}
 	} catch (error) {
-		vscode.window.showErrorMessage(`Forge initialization failed: ${error}`);
 		forgeOutput.appendLine(`✗ Initialization error: ${error}`);
+		statusBar.setEnvironmentMissing(String(error));
+		const choice = await vscode.window.showErrorMessage(
+			`Forge initialization failed: ${error}`,
+			'Open Settings', 'Install Racket', 'Show Output'
+		);
+		if (choice === 'Open Settings') {
+			vscode.commands.executeCommand('workbench.action.openSettings', 'forge.racketPath');
+		} else if (choice === 'Install Racket') {
+			vscode.env.openExternal(vscode.Uri.parse('https://racket-lang.org/'));
+		} else if (choice === 'Show Output') {
+			forgeOutput.show(true);
+		}
 	}
 
 
@@ -196,8 +240,7 @@ export async function activate(context: ExtensionContext) {
 	});
 
 
-	context.globalState.update('forge.isLoggingEnabled', true);
-	vscode.commands.executeCommand('setContext', 'forge.isLoggingEnabled', true);
+	setForgeSterlingWaiting(false);
 
 	const userid = await getUserId(context);
 	const logger = new Logger(userid);
@@ -219,7 +262,7 @@ export async function activate(context: ExtensionContext) {
 	});
 
 	const runFile = vscode.commands.registerCommand('forge.runFile', async () => {
-		const isLoggingEnabled = context.globalState.get<boolean>('forge.isLoggingEnabled', false);
+		const isLoggingEnabled = vscode.workspace.getConfiguration('forge').get<boolean>('telemetry.enabled', true);
 		const editor = vscode.window.activeTextEditor;
 
 		if (!editor) {
@@ -255,6 +298,7 @@ export async function activate(context: ExtensionContext) {
 		}
 
 		let myStderr = '';
+		let runFailed = false;
 		forgeOutput.appendLine(`Running file "${filepath}" ...`);
 
 		// If the user wants Sterling in a VS Code webview, pin the Sterling ports and force
@@ -280,10 +324,12 @@ export async function activate(context: ExtensionContext) {
 				// Open the webview at that point so the iframe loads against a live server.
 				if (useWebview && sterlingUrl && !sterlingWebviewOpened && line.includes('static server port=')) {
 					sterlingWebviewOpened = true;
+					setForgeSterlingWaiting(true);
 					void openSterlingWebview(sterlingUrl, forgeRunner);
 				}
 				if (line === 'Sterling running. Hit enter to stop service.') {
-					forgeOutput.appendLine('Sterling running. Hit "Continue" to stop service and continue execution.');
+					setForgeSterlingWaiting(true);
+					forgeOutput.appendLine('Sterling running. Click "Stop Sterling & Continue" (or close the panel) to finish.');
 				} else {
 					forgeOutput.appendLine(line);
 				}
@@ -295,6 +341,7 @@ export async function activate(context: ExtensionContext) {
 		};
 
 		const exitListener = (code: number | null) => {
+			setForgeSterlingWaiting(false);
 			// The Sterling servers die with the Forge process; close the (now-dead) webview.
 			if (useWebview) {
 				disposeSterlingWebview();
@@ -319,32 +366,63 @@ export async function activate(context: ExtensionContext) {
 			logger.log_payload(payload, LogLevel.INFO, Event.FORGE_RUN_RESULT);
 		};
 
-		try {
-			await forgeRunner.runFile(filepath, {
-				onStdout: stdoutListener,
-				onStderr: stderrListener,
-				onExit: exitListener,
-				extraArgs
-			});
+		// Reflect run state in the toolbar (context key) and status bar.
+		setForgeRunning(true);
+		statusBar.setRunning(path.basename(filepath));
 
-			if (isLoggingEnabled && editor) {
-				const documentData = vscode.workspace.textDocuments.map((d) => {
-					const focusedDoc = (d === editor.document);
-					return textDocumentToLog(d, focusedDoc);
-				}).filter((data) => Object.keys(data).length > 0);
+		// A cancelable progress notification lives for the lifetime of the Forge process; its
+		// Cancel button stops the run the same way the Stop button does.
+		await vscode.window.withProgress({
+			location: vscode.ProgressLocation.Notification,
+			title: `Forge: running ${path.basename(filepath)}`,
+			cancellable: true
+		}, async (_progress, token) => {
+			token.onCancellationRequested(() => forgeRunner.kill(true));
 
-				documentData['runId'] = runId;
-				logger.log_payload(documentData, LogLevel.INFO, Event.FORGE_RUN);
+			try {
+				await forgeRunner.runFile(filepath, {
+					onStdout: stdoutListener,
+					onStderr: stderrListener,
+					onExit: exitListener,
+					extraArgs
+				});
+
+				if (isLoggingEnabled && editor) {
+					const documentData = vscode.workspace.textDocuments.map((d) => {
+						const focusedDoc = (d === editor.document);
+						return textDocumentToLog(d, focusedDoc);
+					}).filter((data) => Object.keys(data).length > 0);
+
+					documentData['runId'] = runId;
+					logger.log_payload(documentData, LogLevel.INFO, Event.FORGE_RUN);
+				}
+			} catch (error) {
+				runFailed = true;
+				const log = textDocumentToLog(editor.document, true);
+				log['error'] = `Could not run Forge process: ${error}`;
+				log['runId'] = runId;
+
+				logger.log_payload(log, LogLevel.ERROR, Event.FORGE_RUN);
+				console.error("Could not run Forge process:", error);
+				const choice = await vscode.window.showErrorMessage(
+					`Could not run Forge process: ${error}`,
+					'Show Output'
+				);
+				if (choice === 'Show Output') {
+					forgeOutput.show(true);
+				}
 			}
-		} catch (error) {
-			const log = textDocumentToLog(editor.document, true);
-			log['error'] = `Could not run Forge process: ${error}`;
-			log['runId'] = runId;
+		});
 
-			logger.log_payload(log, LogLevel.ERROR, Event.FORGE_RUN);
-			vscode.window.showErrorMessage(`Could not run Forge process: ${error}`);
-			console.error("Could not run Forge process:", error);
-			return null;
+		// Run finished (normally, by error, or by Stop/Cancel): clear state, reflect outcome.
+		setForgeRunning(false);
+		setForgeSterlingWaiting(false);
+		if (runFailed || (myStderr.trim() !== '' && !forgeRunner.isKilledManually())) {
+			statusBar.setRunResult('errors');
+		} else if (forgeRunner.isKilledManually()) {
+			statusBar.setRunResult('stopped');
+		} else {
+			statusBar.setRunResult('ok');
 		}
 	});
 
@@ -356,17 +434,18 @@ export async function activate(context: ExtensionContext) {
 		if (!forgeRunner.sendInput('\n')) {
 			vscode.window.showErrorMessage('No active Forge process to continue.');
 		}
+		setForgeSterlingWaiting(false);
 	});
 
 
-	const enableLogging = vscode.commands.registerCommand('forge.enableLogging', () => {
-		context.globalState.update('forge.isLoggingEnabled', true);
-		vscode.commands.executeCommand('setContext', 'forge.isLoggingEnabled', true);
+	const enableLogging = vscode.commands.registerCommand('forge.enableLogging', async () => {
+		await vscode.workspace.getConfiguration('forge').update('telemetry.enabled', true, vscode.ConfigurationTarget.Global);
+		vscode.window.showInformationMessage('Forge telemetry enabled.');
 	});
 
-	const disableLogging = vscode.commands.registerCommand('forge.disableLogging', () => {
-		context.globalState.update('forge.isLoggingEnabled', false);
-		vscode.commands.executeCommand('setContext', 'forge.isLoggingEnabled', false);
+	const disableLogging = vscode.commands.registerCommand('forge.disableLogging', async () => {
+		await vscode.workspace.getConfiguration('forge').update('telemetry.enabled', false, vscode.ConfigurationTarget.Global);
+		vscode.window.showInformationMessage('Forge telemetry disabled.');
 	});
 
 
@@ -420,9 +499,17 @@ export async function activate(context: ExtensionContext) {
 		clientOptions
 	);
 
-	// Start the client. This will also launch the server
-	client.start();
-	console.log('Client and Server launched');
+	// Start the client. This will also launch the server. Guard so that a language-server
+	// failure does not also disable run/Sterling/status features.
+	try {
+		await client.start();
+		console.log('Client and Server launched');
+
+		// Native Test Explorer (results view), backed by the server's forge/runnables request.
+		registerForgeTests(context, client, forgeRunner);
+	} catch (err) {
+		console.error('Forge language server failed to start:', err);
+	}
 }
 
 export function deactivate(): Thenable<void> | undefined {
