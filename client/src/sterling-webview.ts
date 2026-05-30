@@ -71,7 +71,7 @@ export async function openSterlingWebview(rawUrl: string, forgeRunner: ForgeRunn
 
 	sterlingPanel = vscode.window.createWebviewPanel(
 		'forgeSterling',
-		'Sterling',
+		'Cope and Drag',
 		{ viewColumn: vscode.ViewColumn.Beside, preserveFocus: true },
 		{ enableScripts: true, retainContextWhenHidden: true }
 	);
