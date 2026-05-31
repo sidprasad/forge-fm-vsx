@@ -1,6 +1,6 @@
-import { ANTLRInputStream, CommonTokenStream } from 'antlr4ts';
+import { ANTLRInputStream, CommonTokenStream, ParserRuleContext } from 'antlr4ts';
 import { ForgeLexer } from './parser/grammars/ForgeLexer';
-import { ForgeParser, SigDeclContext, PredDeclContext, FunDeclContext, ArrowDeclContext, ParaDeclContext, QuantDeclContext } from './parser/grammars/ForgeParser';
+import { ForgeParser, SigDeclContext, PredDeclContext, FunDeclContext, ArrowDeclContext, ParaDeclContext, QuantDeclContext, TestDeclContext, ExampleDeclContext, CmdDeclContext, AssertDeclContext } from './parser/grammars/ForgeParser';
 import { ForgeVisitor } from './parser/grammars/ForgeVisitor';
 import { AbstractParseTreeVisitor } from 'antlr4ts/tree/AbstractParseTreeVisitor';
 import { Range } from 'vscode-languageserver';
@@ -13,13 +13,19 @@ export enum SymbolKind {
     Variable = 'variable',
     Parameter = 'parameter',
     Test = 'test',
-    Example = 'example'
+    Example = 'example',
+    Command = 'command'
 }
 
 export interface ForgeSymbol {
     name: string;
     kind: SymbolKind;
+    // The selection range: just the name/keyword token. Used by go-to-definition and hover,
+    // and as a DocumentSymbol's selectionRange.
     range: Range;
+    // The full source span of the declaration (start of the construct → end). Used to place
+    // Test Explorer items / CodeLens and to compute folding ranges. Falls back to `range`.
+    fullRange?: Range;
     detail?: string;
     documentation?: string;
 }
@@ -109,6 +115,21 @@ class SymbolExtractorVisitor extends AbstractParseTreeVisitor<void> implements F
     }
 
     /**
+     * Compute the full source span of a parse-tree node (first token → last token),
+     * 0-based for LSP. Used for folding ranges and to anchor Test Explorer items / CodeLens.
+     */
+    private fullRangeOf(ctx: ParserRuleContext): Range {
+        const start = ctx.start;
+        const stop = ctx.stop ?? ctx.start;
+        return Range.create(
+            start.line - 1,
+            start.charPositionInLine,
+            stop.line - 1,
+            stop.charPositionInLine + (stop.text?.length ?? 0)
+        );
+    }
+
+    /**
      * Extract signature declarations
      */
     visitSigDecl(ctx: SigDeclContext): void {
@@ -139,6 +160,7 @@ class SymbolExtractorVisitor extends AbstractParseTreeVisitor<void> implements F
                 name: nameToken.text,
                 kind: SymbolKind.Sig,
                 range: Range.create(line, column, line, column + nameToken.text.length),
+                fullRange: this.fullRangeOf(ctx),
                 detail: detail.trim(),
                 documentation: docComment
             });
@@ -209,6 +231,7 @@ class SymbolExtractorVisitor extends AbstractParseTreeVisitor<void> implements F
                 name: nameToken.text,
                 kind: SymbolKind.Predicate,
                 range: Range.create(line, column, line, column + nameToken.text.length),
+                fullRange: this.fullRangeOf(ctx),
                 detail: detail,
                 documentation: docComment
             });
@@ -249,6 +272,7 @@ class SymbolExtractorVisitor extends AbstractParseTreeVisitor<void> implements F
                 name: nameToken.text,
                 kind: SymbolKind.Function,
                 range: Range.create(line, column, line, column + nameToken.text.length),
+                fullRange: this.fullRangeOf(ctx),
                 detail: detail,
                 documentation: docComment
             });
@@ -314,7 +338,7 @@ class SymbolExtractorVisitor extends AbstractParseTreeVisitor<void> implements F
             }
             
             const detail = `parameter ${nameToken.text}: ${paramType}`;
-            
+
             this.symbols.push({
                 name: nameToken.text,
                 kind: SymbolKind.Parameter,
@@ -323,7 +347,112 @@ class SymbolExtractorVisitor extends AbstractParseTreeVisitor<void> implements F
                 documentation: undefined
             });
         }
-        
+
+        this.visitChildren(ctx);
+    }
+
+    /**
+     * Extract a named test from a `test expect { name: {...} is <expectation> }` block.
+     * Only label-named tests are captured, since those are the ones Forge reports as
+     * "Test passed: <name>" / "Test <name> failed" — the strings the Test Explorer maps.
+     */
+    visitTestDecl(ctx: TestDeclContext): void {
+        const nameToken = ctx.name()?.IDENTIFIER_TOK();
+
+        if (nameToken) {
+            const line = nameToken.symbol.line - 1;
+            const column = nameToken.symbol.charPositionInLine;
+
+            let expectation = '';
+            if (ctx.SAT_TOK()) { expectation = 'sat'; }
+            else if (ctx.UNSAT_TOK()) { expectation = 'unsat'; }
+            else if (ctx.THEOREM_TOK()) { expectation = 'theorem'; }
+            else if (ctx.CHECKED_TOK()) { expectation = 'checked'; }
+            else if (ctx.FORGE_ERROR_TOK()) { expectation = 'forge_error'; }
+
+            this.symbols.push({
+                name: nameToken.text,
+                kind: SymbolKind.Test,
+                range: Range.create(line, column, line, column + nameToken.text.length),
+                fullRange: this.fullRangeOf(ctx),
+                detail: expectation ? `test … is ${expectation}` : 'test',
+                documentation: this.extractDocComment(line)
+            });
+        }
+
+        this.visitChildren(ctx);
+    }
+
+    /**
+     * Extract `example <name> is <pred> for {...}` declarations. Examples run as tests and
+     * report pass/fail the same way named tests do.
+     */
+    visitExampleDecl(ctx: ExampleDeclContext): void {
+        const nameToken = ctx.name().IDENTIFIER_TOK();
+
+        if (nameToken) {
+            const line = nameToken.symbol.line - 1;
+            const column = nameToken.symbol.charPositionInLine;
+
+            this.symbols.push({
+                name: nameToken.text,
+                kind: SymbolKind.Example,
+                range: Range.create(line, column, line, column + nameToken.text.length),
+                fullRange: this.fullRangeOf(ctx),
+                detail: 'example',
+                documentation: this.extractDocComment(line)
+            });
+        }
+
+        this.visitChildren(ctx);
+    }
+
+    /**
+     * Extract `run` / `check` commands. These may be anonymous; anchor the symbol on the name
+     * when present, otherwise on the run/check keyword. Used to place "Run" CodeLens.
+     */
+    visitCmdDecl(ctx: CmdDeclContext): void {
+        const keyword = ctx.RUN_TOK() ? 'run' : (ctx.CHECK_TOK() ? 'check' : 'command');
+        const nameNode = ctx.name()?.IDENTIFIER_TOK();
+        const anchor = nameNode?.symbol ?? (ctx.RUN_TOK() ?? ctx.CHECK_TOK())?.symbol;
+
+        if (anchor) {
+            const line = anchor.line - 1;
+            const column = anchor.charPositionInLine;
+            const anchorText = anchor.text ?? keyword;
+
+            this.symbols.push({
+                name: nameNode?.text ?? keyword,
+                kind: SymbolKind.Command,
+                range: Range.create(line, column, line, column + anchorText.length),
+                fullRange: this.fullRangeOf(ctx),
+                detail: keyword
+            });
+        }
+
+        this.visitChildren(ctx);
+    }
+
+    /**
+     * Extract named `assert <name> { ... }` declarations (verification tests).
+     */
+    visitAssertDecl(ctx: AssertDeclContext): void {
+        const nameToken = ctx.name()?.IDENTIFIER_TOK();
+
+        if (nameToken) {
+            const line = nameToken.symbol.line - 1;
+            const column = nameToken.symbol.charPositionInLine;
+
+            this.symbols.push({
+                name: nameToken.text,
+                kind: SymbolKind.Test,
+                range: Range.create(line, column, line, column + nameToken.text.length),
+                fullRange: this.fullRangeOf(ctx),
+                detail: 'assert',
+                documentation: this.extractDocComment(line)
+            });
+        }
+
         this.visitChildren(ctx);
     }
 }
