@@ -13,7 +13,7 @@ import {
 import { Logger, LogLevel, Event } from "./logger";
 import { ForgeRunner } from './forge-runner';
 import { registerForgeChat } from './forge-chat-participant';
-import { findSterlingPorts, openSterlingWebview, disposeSterlingWebview } from './sterling-webview';
+import { findSterlingPorts, openSterlingWebview, disposeSterlingWebview, markSterlingWebviewStale } from './sterling-webview';
 import * as statusBar from './status-bar';
 import { registerForgeTests } from './forge-tests';
 
@@ -325,7 +325,7 @@ export async function activate(context: ExtensionContext) {
 				if (useWebview && sterlingUrl && !sterlingWebviewOpened && line.includes('static server port=')) {
 					sterlingWebviewOpened = true;
 					setForgeSterlingWaiting(true);
-					void openSterlingWebview(sterlingUrl, forgeRunner);
+					void openSterlingWebview(sterlingUrl, forgeRunner, runId);
 				}
 				if (line === 'Sterling running. Hit enter to stop service.') {
 					setForgeSterlingWaiting(true);
@@ -342,9 +342,12 @@ export async function activate(context: ExtensionContext) {
 
 		const exitListener = (code: number | null) => {
 			setForgeSterlingWaiting(false);
-			// The Sterling servers die with the Forge process; close the (now-dead) webview.
+			// The Sterling servers die with the Forge process; mark the (now-dead) webview stale
+			// so the user sees a banner instead of a silently-broken iframe — but only if this run
+			// still owns the panel. A newer run may have already taken it over (it picks fresh
+			// ports), in which case this stale exit must leave the live panel alone.
 			if (useWebview) {
-				disposeSterlingWebview();
+				markSterlingWebviewStale(runId);
 			}
 			if (!forgeRunner.isKilledManually()) {
 				if (myStderr !== '') {
@@ -515,7 +518,9 @@ export async function activate(context: ExtensionContext) {
 export function deactivate(): Thenable<void> | undefined {
 	const forgeRunner = ForgeRunner.getInstance(forgeOutput);
 	forgeRunner.kill(false);
-	
+	// Close the Sterling panel outright on shutdown (no token: unconditional).
+	disposeSterlingWebview();
+
 	if (!client) {
 		return undefined;
 	}
