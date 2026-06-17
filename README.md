@@ -32,14 +32,21 @@ Smart, non-intrusive completions for Forge. Trigger with **Ctrl+Space** (Windows
 - **Context-aware**: Skips completions inside comments and strings
 - **Helpful documentation**: Each item includes description and usage info
 
-## Commands
+## Commands & keyboard shortcuts
 
-- `Forge: Run`
-- `Forge: Stop`
-- `Forge: Continue Forge Run`
-- `Forge: Enable Logging`
-- `Forge: Disable Logging`
-- `Forge: Forge Docs`
+All commands live in the Command Palette under the **Forge** category. The keyboard shortcuts below apply while editing a Forge (`.frg`) file.
+
+| Command | Mac | Windows / Linux | Description |
+| --- | --- | --- | --- |
+| `Forge: Run` | `Cmd+Alt+N` | `Ctrl+Alt+N` | Run the active Forge file |
+| `Forge: Stop` | — | — | Stop the running Forge process |
+| `Forge: Stop Sterling & Continue` | — | — | End the Sterling session so the run can finish |
+| `Forge: Choose Where Sterling Opens` | `Cmd+Alt+S` | `Ctrl+Alt+S` | Pick whether Sterling opens in a VS Code panel or your web browser |
+| `Forge: Open Settings` | `Cmd+Alt+,` | `Ctrl+Alt+,` | Open this extension's settings |
+| `Forge: Show Output` | — | — | Reveal the Forge output channel |
+| `Forge: Enable Logging` | — | — | Turn on telemetry |
+| `Forge: Disable Logging` | — | — | Turn off telemetry |
+| `Forge: Open Documentation` | — | — | Open the bundled Forge documentation |
 
 ## `@forge` Chat Participant (AI-Powered Help)
 
@@ -88,5 +95,6 @@ Open the Chat panel (`Ctrl+Shift+I` / `Cmd+Shift+I`) and type `@forge` followed 
 | --- | --- | --- | --- |
 | `forge.racketPath` | string | `""` | Path to Racket executable. Leave empty to auto-detect. |
 | `forge.minVersion` | string | `"3.3.0"` | Minimum Forge version required. |
+| `forge.openSterlingIn` | string | `"webview"` | Where the Sterling visualizer opens: `webview` (VS Code panel) or `browser` (system browser). |
 | `forgeLanguageServer.maxNumberOfProblems` | number | `100` | Max diagnostics produced by the server. |
 | `forgeLanguageServer.trace.server` | string | `"messages"` | LSP trace verbosity. |

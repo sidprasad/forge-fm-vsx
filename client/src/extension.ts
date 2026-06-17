@@ -299,6 +299,13 @@ export async function activate(context: ExtensionContext) {
 
 		let myStderr = '';
 		let runFailed = false;
+		// The progress notification is scoped to the *solve* phase, not the whole Forge process
+		// lifetime (in Sterling modes the process lives on serving the visualizer while the user
+		// views the instance). `endSolvePhase` dismisses the toast as soon as Sterling is serving,
+		// or — for non-Sterling runs — when the process exits (the `finally` below).
+		// Assigned synchronously by the Promise executor below, hence the definite-assignment `!`.
+		let endSolvePhase!: () => void;
+		const solvePhaseEnded = new Promise<void>((resolve) => { endSolvePhase = resolve; });
 		forgeOutput.appendLine(`Running file "${filepath}" ...`);
 
 		// If the user wants Sterling in a VS Code webview, pin the Sterling ports and force
@@ -321,14 +328,20 @@ export async function activate(context: ExtensionContext) {
 			const lines = stripAnsi(data.toString()).split(/[\n]/);
 			for (const line of lines) {
 				// Once the static server is up, Forge prints "... (static server port=N) ...".
-				// Open the webview at that point so the iframe loads against a live server.
+				// Open the webview at that point so the iframe loads against a live server. The
+				// instance is solved by now, so this is also where the solve-phase toast drops.
 				if (useWebview && sterlingUrl && !sterlingWebviewOpened && line.includes('static server port=')) {
 					sterlingWebviewOpened = true;
 					setForgeSterlingWaiting(true);
+					endSolvePhase();
 					void openSterlingWebview(sterlingUrl, forgeRunner, runId);
 				}
 				if (line === 'Sterling running. Hit enter to stop service.') {
 					setForgeSterlingWaiting(true);
+					// Sterling is serving (browser mode reaches here without the line above); the
+					// solve is over, so dismiss the toast and let the status bar + toolbar carry
+					// the live-session state for as long as the user views the instance.
+					endSolvePhase();
 					forgeOutput.appendLine('Sterling running. Click "Stop Sterling & Continue" (or close the panel) to finish.');
 				} else {
 					forgeOutput.appendLine(line);
@@ -373,49 +386,57 @@ export async function activate(context: ExtensionContext) {
 		setForgeRunning(true);
 		statusBar.setRunning(path.basename(filepath));
 
-		// A cancelable progress notification lives for the lifetime of the Forge process; its
-		// Cancel button stops the run the same way the Stop button does.
-		await vscode.window.withProgress({
+		// A cancelable progress notification covers the solve only (see `solvePhaseEnded`): its
+		// Cancel button stops the run the same way the Stop button does, and it dismisses itself as
+		// soon as Sterling is serving — handing the live session off to the status bar + the
+		// "Stop Sterling & Continue" toolbar. Fire-and-forget: the run is awaited separately below
+		// and lives until the process actually exits.
+		void vscode.window.withProgress({
 			location: vscode.ProgressLocation.Notification,
 			title: `Forge: running ${path.basename(filepath)}`,
 			cancellable: true
 		}, async (_progress, token) => {
 			token.onCancellationRequested(() => forgeRunner.kill(true));
-
-			try {
-				await forgeRunner.runFile(filepath, {
-					onStdout: stdoutListener,
-					onStderr: stderrListener,
-					onExit: exitListener,
-					extraArgs
-				});
-
-				if (isLoggingEnabled && editor) {
-					const documentData = vscode.workspace.textDocuments.map((d) => {
-						const focusedDoc = (d === editor.document);
-						return textDocumentToLog(d, focusedDoc);
-					}).filter((data) => Object.keys(data).length > 0);
-
-					documentData['runId'] = runId;
-					logger.log_payload(documentData, LogLevel.INFO, Event.FORGE_RUN);
-				}
-			} catch (error) {
-				runFailed = true;
-				const log = textDocumentToLog(editor.document, true);
-				log['error'] = `Could not run Forge process: ${error}`;
-				log['runId'] = runId;
-
-				logger.log_payload(log, LogLevel.ERROR, Event.FORGE_RUN);
-				console.error("Could not run Forge process:", error);
-				const choice = await vscode.window.showErrorMessage(
-					`Could not run Forge process: ${error}`,
-					'Show Output'
-				);
-				if (choice === 'Show Output') {
-					forgeOutput.show(true);
-				}
-			}
+			await solvePhaseEnded;
 		});
+
+		try {
+			await forgeRunner.runFile(filepath, {
+				onStdout: stdoutListener,
+				onStderr: stderrListener,
+				onExit: exitListener,
+				extraArgs
+			});
+
+			if (isLoggingEnabled && editor) {
+				const documentData = vscode.workspace.textDocuments.map((d) => {
+					const focusedDoc = (d === editor.document);
+					return textDocumentToLog(d, focusedDoc);
+				}).filter((data) => Object.keys(data).length > 0);
+
+				documentData['runId'] = runId;
+				logger.log_payload(documentData, LogLevel.INFO, Event.FORGE_RUN);
+			}
+		} catch (error) {
+			runFailed = true;
+			const log = textDocumentToLog(editor.document, true);
+			log['error'] = `Could not run Forge process: ${error}`;
+			log['runId'] = runId;
+
+			logger.log_payload(log, LogLevel.ERROR, Event.FORGE_RUN);
+			console.error("Could not run Forge process:", error);
+			const choice = await vscode.window.showErrorMessage(
+				`Could not run Forge process: ${error}`,
+				'Show Output'
+			);
+			if (choice === 'Show Output') {
+				forgeOutput.show(true);
+			}
+		} finally {
+			// Whatever happened — Sterling served, clean exit, or error — ensure the solve-phase
+			// toast is dismissed. It must never outlive the run.
+			endSolvePhase();
+		}
 
 		// Run finished (normally, by error, or by Stop/Cancel): clear state, reflect outcome.
 		setForgeRunning(false);
@@ -451,9 +472,47 @@ export async function activate(context: ExtensionContext) {
 		vscode.window.showInformationMessage('Forge telemetry disabled.');
 	});
 
+	// Quick chooser for the `forge.openSterlingIn` setting so the visualizer target can be switched
+	// from a keybinding / the Command Palette without digging through Settings. Writes the user-level
+	// (Global) setting; a workspace override, if any, still wins for that workspace.
+	const chooseSterlingTarget = vscode.commands.registerCommand('forge.chooseSterlingTarget', async () => {
+		const config = vscode.workspace.getConfiguration('forge');
+		const current = config.get<string>('openSterlingIn', 'webview');
+		const items: (vscode.QuickPickItem & { value: 'webview' | 'browser' })[] = [
+			{
+				value: 'webview',
+				label: '$(window) VS Code panel',
+				description: current === 'webview' ? '$(check) current' : undefined,
+				detail: 'Show Sterling in a VS Code webview (Cope and Drag). Forces headless mode so no browser window opens.'
+			},
+			{
+				value: 'browser',
+				label: '$(globe) System web browser',
+				description: current === 'browser' ? '$(check) current' : undefined,
+				detail: "Open Sterling in your system's default web browser."
+			}
+		];
+		const pick = await vscode.window.showQuickPick(items, {
+			title: 'Where should Sterling open?',
+			placeHolder: 'Choose where the Sterling visualizer opens when a run produces an instance'
+		});
+		if (!pick || pick.value === current) {
+			return;
+		}
+		await config.update('openSterlingIn', pick.value, vscode.ConfigurationTarget.Global);
+		vscode.window.showInformationMessage(
+			`Sterling will now open in ${pick.value === 'webview' ? 'a VS Code panel' : 'your web browser'}.`
+		);
+	});
 
-	context.subscriptions.push(runFile, stopRun, continueRun, enableLogging, disableLogging, forgeEvalDiagnostics,
-		forgeOutput, forgeDocs, showForgeOutput);
+	// Jump straight to this extension's settings (Settings UI filtered to the Forge contributions).
+	const openSettings = vscode.commands.registerCommand('forge.openSettings', () => {
+		vscode.commands.executeCommand('workbench.action.openSettings', '@ext:SiddharthaPrasad.forge-fm');
+	});
+
+
+	context.subscriptions.push(runFile, stopRun, continueRun, enableLogging, disableLogging, chooseSterlingTarget,
+		openSettings, forgeEvalDiagnostics, forgeOutput, forgeDocs, showForgeOutput);
 
 	// Register @forge chat participant (requires GitHub Copilot)
 	registerForgeChat(context);
