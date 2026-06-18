@@ -3,7 +3,7 @@
 	"description": "Editor support for Forge FM",
 	"author": "Siddhartha Prasad",
 	"license": "MIT",
-	"version": "0.2.2",
+	"version": "0.2.3",
 	"repository": {
 		"type": "git",
 		"url": ""
@@ -175,6 +175,18 @@
 				"title": "Show Output",
 				"category": "Forge",
 				"icon": "$(output)"
+			},
+			{
+				"command": "forge.chooseSterlingTarget",
+				"title": "Choose Where Sterling Opens",
+				"category": "Forge",
+				"icon": "$(window)"
+			},
+			{
+				"command": "forge.openSettings",
+				"title": "Open Settings",
+				"category": "Forge",
+				"icon": "$(gear)"
 			}
 		],
 		"keybindings": [
@@ -183,6 +195,18 @@
 				"key": "ctrl+alt+n",
 				"mac": "cmd+alt+n",
 				"when": "editorLangId == forge && editorTextFocus"
+			},
+			{
+				"command": "forge.chooseSterlingTarget",
+				"key": "ctrl+alt+s",
+				"mac": "cmd+alt+s",
+				"when": "editorLangId == forge"
+			},
+			{
+				"command": "forge.openSettings",
+				"key": "ctrl+alt+,",
+				"mac": "cmd+alt+,",
+				"when": "editorLangId == forge"
 			}
 		],
 		"menus": {
