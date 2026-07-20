@@ -45,6 +45,41 @@ export function findFreePort(): Promise<number> {
 }
 
 /**
+ * Resolve `true` once something is accepting TCP connections on `port` (loopback), or
+ * `false` if `isAlive()` returns false before that happens.
+ *
+ * This is a readiness signal for the Sterling visualizer that does not depend on scraping
+ * a particular line out of Forge's stdout. Whatever Forge prints, the visualizer is ready
+ * exactly when its server is actually listening — so a reworded Forge log message can no
+ * longer strand the panel. On a slow solve the port simply comes up later; polling just
+ * keeps trying until it does or the Forge process is gone, so there is no false "not ready".
+ */
+export function waitForPort(port: number, isAlive: () => boolean, intervalMs = 400): Promise<boolean> {
+	return new Promise((resolve) => {
+		let settled = false;
+		const finish = (value: boolean) => {
+			if (!settled) {
+				settled = true;
+				resolve(value);
+			}
+		};
+		const attempt = () => {
+			if (settled) {
+				return;
+			}
+			if (!isAlive()) {
+				finish(false);
+				return;
+			}
+			const sock = net.connect({ host: '127.0.0.1', port });
+			sock.once('connect', () => { sock.destroy(); finish(true); });
+			sock.once('error', () => { sock.destroy(); setTimeout(attempt, intervalMs); });
+		};
+		attempt();
+	});
+}
+
+/**
  * Find two distinct free ports (static-file server + WebSocket provider).
  */
 export async function findSterlingPorts(): Promise<{ staticPort: number; providerPort: number }> {
@@ -194,7 +229,7 @@ function getSterlingHtml(uri: vscode.Uri): string {
 <body>
 <iframe src="${src}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
 <div id="stale-overlay" role="status">
-	<div id="stale-banner">This Sterling session has ended — its servers are no longer running. Run the file again to launch a fresh visualization.</div>
+	<div id="stale-banner">This Sterling session has ended — it is no longer connected to Forge. Run the file again to launch a fresh visualization.</div>
 </div>
 <script nonce="${nonce}">
 	window.addEventListener('message', function (event) {

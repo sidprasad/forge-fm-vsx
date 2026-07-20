@@ -13,14 +13,18 @@ import {
 import { Logger, LogLevel, Event } from "./logger";
 import { ForgeRunner } from './forge-runner';
 import { registerForgeChat } from './forge-chat-participant';
-import { findSterlingPorts, openSterlingWebview, disposeSterlingWebview, markSterlingWebviewStale } from './sterling-webview';
+import { findFreePort, findSterlingPorts, waitForPort, openSterlingWebview, disposeSterlingWebview, markSterlingWebviewStale } from './sterling-webview';
 import * as statusBar from './status-bar';
 import { registerForgeTests } from './forge-tests';
+import { CopeAndDragServer, getBundlePath } from './copeanddrag';
 
 const os = require("os");
 import { v4 as uuidv4 } from 'uuid';
 
 let client: LanguageClient;
+// Serves the Cope and Drag build vendored into this extension. Created only if the bundle
+// was vendored at build time; absent means runs fall back to Forge's own copy.
+let cndServer: CopeAndDragServer | undefined;
 
 const forgeOutput = vscode.window.createOutputChannel('Forge Output');
 
@@ -195,6 +199,24 @@ export async function activate(context: ExtensionContext) {
 		}
 	}
 
+	// Cope and Drag ships with this extension so its releases are not gated on Forge's.
+	// The server itself starts lazily on the first webview run.
+	//
+	// Placed after Forge initialization on purpose: the capability probe needs the resolved
+	// Racket path, and starting it earlier would race `initialize()` into discovering the
+	// toolchain twice.
+	const cndBundle = getBundlePath(context);
+	if (cndBundle) {
+		cndServer = new CopeAndDragServer(cndBundle, forgeOutput);
+		context.subscriptions.push(cndServer);
+		// Warm the ~2.5s Racket capability probe now, off the run path, so the first run does
+		// not stall on it. Memoized, so the run just awaits an already-settled promise.
+		void forgeRunner.supportsServeMode().catch(() => { /* probed again on first use */ });
+	} else {
+		forgeOutput.appendLine(
+			'! No Cope and Drag bundle vendored in this build; falling back to the copy shipped with Forge.'
+		);
+	}
 
 	// inspired by: https://github.com/GrandChris/TerminalRelativePath/blob/main/src/extension.ts
 	vscode.window.registerTerminalLinkProvider({
@@ -308,33 +330,86 @@ export async function activate(context: ExtensionContext) {
 		const solvePhaseEnded = new Promise<void>((resolve) => { endSolvePhase = resolve; });
 		forgeOutput.appendLine(`Running file "${filepath}" ...`);
 
-		// If the user wants Sterling in a VS Code webview, pin the Sterling ports and force
-		// headless mode so Forge serves the visualizer without opening the system browser.
+		// If the user wants Sterling in a VS Code webview, pin the Sterling ports so we know
+		// where the visualizer will live, and keep Forge from opening a browser window.
+		//
+		// Preferred path: we serve our own (newer) Cope and Drag and put Forge in `serve`
+		// mode, where it starts only the WebSocket data provider. Falls back to `headless`
+		// — Forge serving its own bundled copy — when we have no bundle or the installed
+		// Forge predates `serve` mode. The fallback is the extension's previous behaviour,
+		// so no user ends up worse off than before this feature existed.
 		const useWebview = forgeSettings.get<string>('openSterlingIn', 'webview') === 'webview';
 		let extraArgs: string[] | undefined;
 		let sterlingUrl: string | undefined;
 		let sterlingWebviewOpened = false;
+		// Marks that *we* are serving the visualizer, which changes both the Forge args and
+		// the stdout line that signals the visualizer is ready.
+		let extensionServed = false;
+		// The port whose "now listening" moment means the visualizer can load: in `serve`
+		// mode Forge's data provider (our static server is already up); in `headless` mode
+		// Forge's own static server (which it starts after the provider). Polled below as a
+		// stdout-independent readiness signal.
+		let readinessPort: number | undefined;
+		// Flipped true when the Forge process is gone, so the readiness poll stops chasing it.
+		let processExited = false;
 		if (useWebview) {
-			const { staticPort, providerPort } = await findSterlingPorts();
-			extraArgs = [
-				'-O', 'run_sterling', 'headless',
-				'-O', 'sterling_static_port', String(staticPort),
-				'-O', 'sterling_port', String(providerPort),
-			];
-			sterlingUrl = `http://127.0.0.1:${staticPort}/?${providerPort}`;
+			let cndStaticPort: number | undefined;
+			if (cndServer && await forgeRunner.supportsServeMode()) {
+				try {
+					cndStaticPort = await cndServer.ensureStarted();
+				} catch (err) {
+					// We have a bundle and Forge supports serve mode, yet our own server failed to
+					// start — unexpected, so surface it rather than swapping visualizers silently.
+					forgeOutput.appendLine(`! Could not start the Cope and Drag server (${err}); using Forge's copy.`);
+					void vscode.window.showWarningMessage(
+						'Could not start the bundled Cope and Drag; falling back to the version shipped with Forge.'
+					);
+				}
+			}
+
+			if (cndStaticPort !== undefined) {
+				const providerPort = await findFreePort();
+				extraArgs = [
+					'-O', 'run_sterling', 'serve',
+					'-O', 'sterling_port', String(providerPort),
+				];
+				sterlingUrl = `http://127.0.0.1:${cndStaticPort}/?${providerPort}`;
+				extensionServed = true;
+				readinessPort = providerPort;
+			} else {
+				const { staticPort, providerPort } = await findSterlingPorts();
+				extraArgs = [
+					'-O', 'run_sterling', 'headless',
+					'-O', 'sterling_static_port', String(staticPort),
+					'-O', 'sterling_port', String(providerPort),
+				];
+				sterlingUrl = `http://127.0.0.1:${staticPort}/?${providerPort}`;
+				readinessPort = staticPort;
+			}
 		}
+
+		// Open the Sterling panel exactly once, from whichever readiness signal wins the race:
+		// the Forge log line (fast path, below) or the port poll (robust path, further down).
+		const openSterlingOnce = () => {
+			if (!useWebview || !sterlingUrl || sterlingWebviewOpened) {
+				return;
+			}
+			sterlingWebviewOpened = true;
+			setForgeSterlingWaiting(true);
+			endSolvePhase();
+			void openSterlingWebview(sterlingUrl, forgeRunner, runId);
+		};
 
 		const stdoutListener = (data: string) => {
 			const lines = stripAnsi(data.toString()).split(/[\n]/);
 			for (const line of lines) {
-				// Once the static server is up, Forge prints "... (static server port=N) ...".
-				// Open the webview at that point so the iframe loads against a live server. The
-				// instance is solved by now, so this is also where the solve-phase toast drops.
-				if (useWebview && sterlingUrl && !sterlingWebviewOpened && line.includes('static server port=')) {
-					sterlingWebviewOpened = true;
-					setForgeSterlingWaiting(true);
-					endSolvePhase();
-					void openSterlingWebview(sterlingUrl, forgeRunner, runId);
+				// Fast path for opening the panel: the line Forge prints once the visualizer can
+				// load. In `serve` mode that is the data provider ("provider at:"); in `headless`
+				// mode Forge's own static server ("static server port=N"). This only races the
+				// port poll below — if Forge ever rewords the line, the poll still opens the panel.
+				const readyMarker = extensionServed ? 'provider at:' : 'static server port=';
+				if (line.includes(readyMarker)) {
+					openSterlingOnce();
 				}
 				if (line === 'Sterling running. Hit enter to stop service.') {
 					setForgeSterlingWaiting(true);
@@ -354,11 +429,14 @@ export async function activate(context: ExtensionContext) {
 		};
 
 		const exitListener = (code: number | null) => {
+			processExited = true;
 			setForgeSterlingWaiting(false);
-			// The Sterling servers die with the Forge process; mark the (now-dead) webview stale
-			// so the user sees a banner instead of a silently-broken iframe — but only if this run
-			// still owns the panel. A newer run may have already taken it over (it picks fresh
-			// ports), in which case this stale exit must leave the live panel alone.
+			// Forge's data provider dies with the process, so the visualization is no longer live
+			// (in `headless` mode Forge's static server goes too; in `serve` mode ours stays up,
+			// but a page with no provider is just as dead). Mark the webview stale so the user
+			// sees a banner instead of a silently-broken iframe — but only if this run still owns
+			// the panel. A newer run may have already taken it over (it picks a fresh provider
+			// port), in which case this stale exit must leave the live panel alone.
 			if (useWebview) {
 				markSterlingWebviewStale(runId);
 			}
@@ -400,6 +478,18 @@ export async function activate(context: ExtensionContext) {
 			await solvePhaseEnded;
 		});
 
+		// Robust readiness: open the panel when the visualizer's server is actually listening,
+		// independent of what Forge prints. This is what makes a reworded Forge log line
+		// harmless — the port coming up still opens the panel. A slow solve just brings the port
+		// up later; the poll waits it out rather than reporting a false failure.
+		if (useWebview && readinessPort !== undefined) {
+			void waitForPort(readinessPort, () => !processExited).then((up) => {
+				if (up) {
+					openSterlingOnce();
+				}
+			});
+		}
+
 		try {
 			await forgeRunner.runFile(filepath, {
 				onStdout: stdoutListener,
@@ -436,6 +526,8 @@ export async function activate(context: ExtensionContext) {
 			// Whatever happened — Sterling served, clean exit, or error — ensure the solve-phase
 			// toast is dismissed. It must never outlive the run.
 			endSolvePhase();
+			// If the process failed to spawn, `exit` never fired; stop the readiness poll here.
+			processExited = true;
 		}
 
 		// Run finished (normally, by error, or by Stop/Cancel): clear state, reflect outcome.
@@ -483,13 +575,13 @@ export async function activate(context: ExtensionContext) {
 				value: 'webview',
 				label: '$(window) VS Code panel',
 				description: current === 'webview' ? '$(check) current' : undefined,
-				detail: 'Show Sterling in a VS Code webview (Cope and Drag). Forces headless mode so no browser window opens.'
+				detail: "Show Cope and Drag in a VS Code webview, using the copy bundled with this extension. No browser window opens."
 			},
 			{
 				value: 'browser',
 				label: '$(globe) System web browser',
 				description: current === 'browser' ? '$(check) current' : undefined,
-				detail: "Open Sterling in your system's default web browser."
+				detail: "Open Sterling in your system's default web browser, using the Cope and Drag bundled with Forge."
 			}
 		];
 		const pick = await vscode.window.showQuickPick(items, {
