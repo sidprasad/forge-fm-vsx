@@ -3,7 +3,9 @@
 	"description": "Editor support for Forge FM",
 	"author": "Siddhartha Prasad",
 	"license": "MIT",
-	"version": "0.2.3",
+	"version": "0.2.4",
+	"comment:copeAndDragVersion": "Cope and Drag release tag vendored into this extension by scripts/fetch-copeanddrag.js. Bump this (with the version above) to ship a new visualizer.",
+	"copeAndDragVersion": "v4.0.19",
 	"repository": {
 		"type": "git",
 		"url": ""
@@ -113,8 +115,8 @@
 						"webview"
 					],
 					"enumDescriptions": [
-						"Open the Sterling visualizer in your system's default web browser.",
-						"Open the Sterling visualizer in a VS Code panel (default). Forces this run into headless mode (overrides 'option run_sterling' in the file) so no browser window opens."
+						"Open the Sterling visualizer in your system's default web browser. Uses the Cope and Drag bundled with Forge.",
+						"Open the Sterling visualizer in a VS Code panel (default). Overrides 'option run_sterling' in the file so no browser window opens, and uses the Cope and Drag bundled with this extension, which updates independently of Forge."
 					],
 					"default": "webview",
 					"description": "Where to display the Sterling visualizer when a Forge run produces an instance."
@@ -235,11 +237,12 @@
 		}
 	},
 	"scripts": {
-		"vscode:prepublish": "npm run compile",
+		"vscode:prepublish": "node ./scripts/fetch-copeanddrag.js --required && npm run compile",
 		"compile": "tsc -b",
 		"watch": "tsc -b -w",
+		"fetch-copeanddrag": "node ./scripts/fetch-copeanddrag.js",
 		"lint": "eslint ./client/src ./server/src --ext .ts,.tsx",
-		"postinstall": "cd client && npm install && cd ../server && npm install && cd ..",
+		"postinstall": "cd client && npm install && cd ../server && npm install && cd .. && npm run fetch-copeanddrag",
 		"test": "sh ./scripts/e2e.sh"
 	},
 	"devDependencies": {
@@ -250,6 +253,7 @@
 		"@typescript-eslint/parser": "^4.23.0",
 		"@vscode/vsce": "^2.24.0",
 		"eslint": "^7.26.0",
+		"fflate": "^0.8.2",
 		"mocha": "^11.7.5",
 		"typescript": "^5.3.3"
 	},

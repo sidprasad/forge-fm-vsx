@@ -194,7 +194,7 @@ function getSterlingHtml(uri: vscode.Uri): string {
 <body>
 <iframe src="${src}" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>
 <div id="stale-overlay" role="status">
-	<div id="stale-banner">This Sterling session has ended — its servers are no longer running. Run the file again to launch a fresh visualization.</div>
+	<div id="stale-banner">This Sterling session has ended — it is no longer connected to Forge. Run the file again to launch a fresh visualization.</div>
 </div>
 <script nonce="${nonce}">
 	window.addEventListener('message', function (event) {

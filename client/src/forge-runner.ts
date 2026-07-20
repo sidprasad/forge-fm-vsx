@@ -1,4 +1,4 @@
-import { ChildProcess, spawn, execSync } from 'child_process';
+import { ChildProcess, spawn, execSync, execFile } from 'child_process';
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
@@ -45,6 +45,7 @@ export class ForgeRunner {
     private currentProcess: ChildProcess | null = null;
     private wasKilledManually = false;
     private environment: ForgeEnvironment | null = null;
+    private serveModeProbe: Promise<boolean> | undefined = undefined;
 
     private constructor(private output: vscode.OutputChannel) {}
 
@@ -186,6 +187,59 @@ export class ForgeRunner {
         }
 
         return this.compareVersions(installedVersion, minVersion) >= 0;
+    }
+
+    /**
+     * Does the installed Forge support `-O run_sterling serve` (start the Sterling data
+     * provider without also serving the static visualizer)?
+     *
+     * Probed by capability rather than by version. Two reasons:
+     *   - The commit that added `serve` mode did not bump forge/info.rkt, so the version
+     *     number does not distinguish builds that have it from builds that do not.
+     *   - `run_sterling`'s option contract accepts any symbol, so an older Forge does not
+     *     reject `serve`. It falls through to the default branch and opens a *browser
+     *     window* instead — a silent, confusing failure we must not risk.
+     *
+     * `serve-no-sterling` is the procedure that implements the mode and was introduced by
+     * the same commit, so its presence is an exact test.
+     *
+     * Deliberately async (execFile, not execSync): the probe costs ~2.5s because Racket has
+     * to load the Forge collection, and execSync would block the extension host for that
+     * whole time. Result is memoized, and callers should warm it during activation so the
+     * first run does not pay for it.
+     */
+    supportsServeMode(): Promise<boolean> {
+        if (this.serveModeProbe) {
+            return this.serveModeProbe;
+        }
+        this.serveModeProbe = this.probeServeMode();
+        return this.serveModeProbe;
+    }
+
+    private async probeServeMode(): Promise<boolean> {
+        if (!this.environment) {
+            await this.initialize();
+        }
+        const racketPath = this.environment!.racketPath;
+
+        const supported = await new Promise<boolean>((resolve) => {
+            execFile(
+                racketPath,
+                ['-e', '(require forge/server/serve-sterling-static) (display (procedure? serve-no-sterling))'],
+                { encoding: 'utf-8', timeout: 30000 },
+                (err, stdout) => {
+                    // Module or binding absent (older Forge), or Racket failed outright.
+                    resolve(!err && stdout.includes('#t'));
+                }
+            );
+        });
+
+        if (!supported) {
+            this.output.appendLine(
+                '! Installed Forge does not support "run_sterling serve"; using Forge\'s own bundled Cope and Drag.'
+            );
+        }
+        return supported;
     }
 
     /**
@@ -331,6 +385,7 @@ export class ForgeRunner {
     reset(): void {
         this.kill(false);
         this.environment = null;
+        this.serveModeProbe = undefined;
     }
 
     // ========== Error Parsing Utilities ==========
