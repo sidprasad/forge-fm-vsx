@@ -13,7 +13,7 @@ import {
 import { Logger, LogLevel, Event } from "./logger";
 import { ForgeRunner } from './forge-runner';
 import { registerForgeChat } from './forge-chat-participant';
-import { findFreePort, findSterlingPorts, openSterlingWebview, disposeSterlingWebview, markSterlingWebviewStale } from './sterling-webview';
+import { findFreePort, findSterlingPorts, waitForPort, openSterlingWebview, disposeSterlingWebview, markSterlingWebviewStale } from './sterling-webview';
 import * as statusBar from './status-bar';
 import { registerForgeTests } from './forge-tests';
 import { CopeAndDragServer, getBundlePath } from './copeanddrag';
@@ -345,13 +345,25 @@ export async function activate(context: ExtensionContext) {
 		// Marks that *we* are serving the visualizer, which changes both the Forge args and
 		// the stdout line that signals the visualizer is ready.
 		let extensionServed = false;
+		// The port whose "now listening" moment means the visualizer can load: in `serve`
+		// mode Forge's data provider (our static server is already up); in `headless` mode
+		// Forge's own static server (which it starts after the provider). Polled below as a
+		// stdout-independent readiness signal.
+		let readinessPort: number | undefined;
+		// Flipped true when the Forge process is gone, so the readiness poll stops chasing it.
+		let processExited = false;
 		if (useWebview) {
 			let cndStaticPort: number | undefined;
 			if (cndServer && await forgeRunner.supportsServeMode()) {
 				try {
 					cndStaticPort = await cndServer.ensureStarted();
 				} catch (err) {
+					// We have a bundle and Forge supports serve mode, yet our own server failed to
+					// start — unexpected, so surface it rather than swapping visualizers silently.
 					forgeOutput.appendLine(`! Could not start the Cope and Drag server (${err}); using Forge's copy.`);
+					void vscode.window.showWarningMessage(
+						'Could not start the bundled Cope and Drag; falling back to the version shipped with Forge.'
+					);
 				}
 			}
 
@@ -363,6 +375,7 @@ export async function activate(context: ExtensionContext) {
 				];
 				sterlingUrl = `http://127.0.0.1:${cndStaticPort}/?${providerPort}`;
 				extensionServed = true;
+				readinessPort = providerPort;
 			} else {
 				const { staticPort, providerPort } = await findSterlingPorts();
 				extraArgs = [
@@ -371,23 +384,32 @@ export async function activate(context: ExtensionContext) {
 					'-O', 'sterling_port', String(providerPort),
 				];
 				sterlingUrl = `http://127.0.0.1:${staticPort}/?${providerPort}`;
+				readinessPort = staticPort;
 			}
 		}
+
+		// Open the Sterling panel exactly once, from whichever readiness signal wins the race:
+		// the Forge log line (fast path, below) or the port poll (robust path, further down).
+		const openSterlingOnce = () => {
+			if (!useWebview || !sterlingUrl || sterlingWebviewOpened) {
+				return;
+			}
+			sterlingWebviewOpened = true;
+			setForgeSterlingWaiting(true);
+			endSolvePhase();
+			void openSterlingWebview(sterlingUrl, forgeRunner, runId);
+		};
 
 		const stdoutListener = (data: string) => {
 			const lines = stripAnsi(data.toString()).split(/[\n]/);
 			for (const line of lines) {
-				// Wait for the signal that the visualizer can actually load before opening the
-				// panel. In `serve` mode that is Forge announcing its data provider ("provider
-				// at:"); in `headless` mode it is Forge's own static server ("static server
-				// port=N"). Either way the instance is solved by now, so this is also where the
-				// solve-phase toast drops.
+				// Fast path for opening the panel: the line Forge prints once the visualizer can
+				// load. In `serve` mode that is the data provider ("provider at:"); in `headless`
+				// mode Forge's own static server ("static server port=N"). This only races the
+				// port poll below — if Forge ever rewords the line, the poll still opens the panel.
 				const readyMarker = extensionServed ? 'provider at:' : 'static server port=';
-				if (useWebview && sterlingUrl && !sterlingWebviewOpened && line.includes(readyMarker)) {
-					sterlingWebviewOpened = true;
-					setForgeSterlingWaiting(true);
-					endSolvePhase();
-					void openSterlingWebview(sterlingUrl, forgeRunner, runId);
+				if (line.includes(readyMarker)) {
+					openSterlingOnce();
 				}
 				if (line === 'Sterling running. Hit enter to stop service.') {
 					setForgeSterlingWaiting(true);
@@ -407,6 +429,7 @@ export async function activate(context: ExtensionContext) {
 		};
 
 		const exitListener = (code: number | null) => {
+			processExited = true;
 			setForgeSterlingWaiting(false);
 			// Forge's data provider dies with the process, so the visualization is no longer live
 			// (in `headless` mode Forge's static server goes too; in `serve` mode ours stays up,
@@ -455,6 +478,18 @@ export async function activate(context: ExtensionContext) {
 			await solvePhaseEnded;
 		});
 
+		// Robust readiness: open the panel when the visualizer's server is actually listening,
+		// independent of what Forge prints. This is what makes a reworded Forge log line
+		// harmless — the port coming up still opens the panel. A slow solve just brings the port
+		// up later; the poll waits it out rather than reporting a false failure.
+		if (useWebview && readinessPort !== undefined) {
+			void waitForPort(readinessPort, () => !processExited).then((up) => {
+				if (up) {
+					openSterlingOnce();
+				}
+			});
+		}
+
 		try {
 			await forgeRunner.runFile(filepath, {
 				onStdout: stdoutListener,
@@ -491,6 +526,8 @@ export async function activate(context: ExtensionContext) {
 			// Whatever happened — Sterling served, clean exit, or error — ensure the solve-phase
 			// toast is dismissed. It must never outlive the run.
 			endSolvePhase();
+			// If the process failed to spawn, `exit` never fired; stop the readiness poll here.
+			processExited = true;
 		}
 
 		// Run finished (normally, by error, or by Stop/Cancel): clear state, reflect outcome.
