@@ -3,9 +3,9 @@
 	"description": "Editor support for Forge FM",
 	"author": "Siddhartha Prasad",
 	"license": "MIT",
-	"version": "0.2.4",
+	"version": "0.2.5",
 	"comment:copeAndDragVersion": "Cope and Drag release tag vendored into this extension by scripts/fetch-copeanddrag.js. Bump this (with the version above) to ship a new visualizer.",
-	"copeAndDragVersion": "v4.0.19",
+	"copeAndDragVersion": "v4.1.0",
 	"repository": {
 		"type": "git",
 		"url": ""
