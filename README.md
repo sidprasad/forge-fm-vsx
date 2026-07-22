@@ -96,5 +96,6 @@ Open the Chat panel (`Ctrl+Shift+I` / `Cmd+Shift+I`) and type `@forge` followed 
 | `forge.racketPath` | string | `""` | Path to Racket executable. Leave empty to auto-detect. |
 | `forge.minVersion` | string | `"3.3.0"` | Minimum Forge version required. |
 | `forge.openSterlingIn` | string | `"webview"` | Where the Sterling visualizer opens: `webview` (VS Code panel) or `browser` (system browser). |
+| `forge.copeAndDragVersion` | string | `""` | Cope and Drag (Sterling visualizer) release to use in the `webview`. Empty = the copy bundled with your Forge; a release tag (e.g. `v4.1.0`) is downloaded from [sidprasad/copeanddrag](https://github.com/sidprasad/copeanddrag/releases) and served instead. Falls back to Forge's copy on failure. |
 | `forgeLanguageServer.maxNumberOfProblems` | number | `100` | Max diagnostics produced by the server. |
 | `forgeLanguageServer.trace.server` | string | `"messages"` | LSP trace verbosity. |

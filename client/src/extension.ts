@@ -16,14 +16,15 @@ import { registerForgeChat } from './forge-chat-participant';
 import { findFreePort, findSterlingPorts, waitForPort, openSterlingWebview, disposeSterlingWebview, markSterlingWebviewStale } from './sterling-webview';
 import * as statusBar from './status-bar';
 import { registerForgeTests } from './forge-tests';
-import { CopeAndDragServer, getBundlePath } from './copeanddrag';
+import { CopeAndDragServer } from './copeanddrag';
+import { ensureReleaseFetched } from './copeanddrag-fetch';
 
 const os = require("os");
 import { v4 as uuidv4 } from 'uuid';
 
 let client: LanguageClient;
-// Serves the Cope and Drag build vendored into this extension. Created only if the bundle
-// was vendored at build time; absent means runs fall back to Forge's own copy.
+// Serves an extension-fetched Cope and Drag bundle over loopback when the user pins a release in
+// `forge.copeAndDragVersion`. Created at activation; starts lazily on the first pinned run.
 let cndServer: CopeAndDragServer | undefined;
 
 const forgeOutput = vscode.window.createOutputChannel('Forge Output');
@@ -199,23 +200,20 @@ export async function activate(context: ExtensionContext) {
 		}
 	}
 
-	// Cope and Drag ships with this extension so its releases are not gated on Forge's.
-	// The server itself starts lazily on the first webview run.
+	// Cope and Drag defaults to Forge's own copy (headless mode). Only when the user pins a release
+	// via `forge.copeAndDragVersion` does the extension fetch it and serve it from this loopback
+	// server, which starts lazily on the first such run.
 	//
 	// Placed after Forge initialization on purpose: the capability probe needs the resolved
 	// Racket path, and starting it earlier would race `initialize()` into discovering the
 	// toolchain twice.
-	const cndBundle = getBundlePath(context);
-	if (cndBundle) {
-		cndServer = new CopeAndDragServer(cndBundle, forgeOutput);
-		context.subscriptions.push(cndServer);
-		// Warm the ~2.5s Racket capability probe now, off the run path, so the first run does
-		// not stall on it. Memoized, so the run just awaits an already-settled promise.
+	cndServer = new CopeAndDragServer(forgeOutput);
+	context.subscriptions.push(cndServer);
+	// Warm the ~2.5s Racket capability probe now, off the run path, so the first pinned run does
+	// not stall on it. Only matters when a version is pinned; memoized, so a later run just awaits
+	// an already-settled promise.
+	if (vscode.workspace.getConfiguration('forge').get<string>('copeAndDragVersion', '').trim() !== '') {
 		void forgeRunner.supportsServeMode().catch(() => { /* probed again on first use */ });
-	} else {
-		forgeOutput.appendLine(
-			'! No Cope and Drag bundle vendored in this build; falling back to the copy shipped with Forge.'
-		);
 	}
 
 	// inspired by: https://github.com/GrandChris/TerminalRelativePath/blob/main/src/extension.ts
@@ -333,11 +331,10 @@ export async function activate(context: ExtensionContext) {
 		// If the user wants Sterling in a VS Code webview, pin the Sterling ports so we know
 		// where the visualizer will live, and keep Forge from opening a browser window.
 		//
-		// Preferred path: we serve our own (newer) Cope and Drag and put Forge in `serve`
-		// mode, where it starts only the WebSocket data provider. Falls back to `headless`
-		// — Forge serving its own bundled copy — when we have no bundle or the installed
-		// Forge predates `serve` mode. The fallback is the extension's previous behaviour,
-		// so no user ends up worse off than before this feature existed.
+		// Default path: Forge serves its own Cope and Drag in `headless` mode. When the user pins a
+		// release via `forge.copeAndDragVersion`, we instead fetch that release, serve it ourselves,
+		// and put Forge in `serve` mode (data provider only). Any failure of the pinned path falls
+		// back to `headless`, so no user ends up worse off than the default.
 		const useWebview = forgeSettings.get<string>('openSterlingIn', 'webview') === 'webview';
 		let extraArgs: string[] | undefined;
 		let sterlingUrl: string | undefined;
@@ -354,16 +351,27 @@ export async function activate(context: ExtensionContext) {
 		let processExited = false;
 		if (useWebview) {
 			let cndStaticPort: number | undefined;
-			if (cndServer && await forgeRunner.supportsServeMode()) {
+			const desiredVersion = forgeSettings.get<string>('copeAndDragVersion', '').trim();
+			// Serve our own Cope and Drag only when the user has pinned a specific release AND the
+			// installed Forge supports `serve` mode. Otherwise Forge serves its own copy (headless).
+			if (desiredVersion !== '' && cndServer && await forgeRunner.supportsServeMode()) {
 				try {
-					cndStaticPort = await cndServer.ensureStarted();
-				} catch (err) {
-					// We have a bundle and Forge supports serve mode, yet our own server failed to
-					// start — unexpected, so surface it rather than swapping visualizers silently.
-					forgeOutput.appendLine(`! Could not start the Cope and Drag server (${err}); using Forge's copy.`);
-					void vscode.window.showWarningMessage(
-						'Could not start the bundled Cope and Drag; falling back to the version shipped with Forge.'
+					const bundleDir = await vscode.window.withProgress(
+						{
+							location: vscode.ProgressLocation.Notification,
+							title: `Loading Cope and Drag ${desiredVersion}…`
+						},
+						() => ensureReleaseFetched(desiredVersion, context.globalStorageUri.fsPath, forgeOutput)
 					);
+					cndStaticPort = await cndServer.ensureStarted(bundleDir);
+				} catch (err) {
+					// The user pinned a release we could not fetch or serve — surface it and fall
+					// back to Forge's own copy rather than silently ignoring their choice.
+					forgeOutput.appendLine(`! Could not use Cope and Drag ${desiredVersion} (${err}); using Forge's copy.`);
+					void vscode.window.showWarningMessage(
+						`Could not load Cope and Drag ${desiredVersion}; falling back to the version shipped with Forge.`
+					);
+					cndStaticPort = undefined;
 				}
 			}
 
