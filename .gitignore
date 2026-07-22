@@ -3,9 +3,3 @@ node_modules
 client/server
 .vscode-test
 *.vsix
-
-# Cope and Drag build, vendored at build time by scripts/fetch-copeanddrag.js from the
-# tag pinned in package.json's "copeAndDragVersion". A build artifact, not source — it is
-# ~18 MB of minified JS per release and would bloat history fast.
-client/copeanddrag/
-client/.copeanddrag-staging-*

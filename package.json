@@ -3,9 +3,7 @@
 	"description": "Editor support for Forge FM",
 	"author": "Siddhartha Prasad",
 	"license": "MIT",
-	"version": "0.2.5",
-	"comment:copeAndDragVersion": "Cope and Drag release tag vendored into this extension by scripts/fetch-copeanddrag.js. Bump this (with the version above) to ship a new visualizer.",
-	"copeAndDragVersion": "v4.1.0",
+	"version": "0.2.6",
 	"repository": {
 		"type": "git",
 		"url": ""
@@ -116,10 +114,16 @@
 					],
 					"enumDescriptions": [
 						"Open the Sterling visualizer in your system's default web browser. Uses the Cope and Drag bundled with Forge.",
-						"Open the Sterling visualizer in a VS Code panel (default). Overrides 'option run_sterling' in the file so no browser window opens, and uses the Cope and Drag bundled with this extension, which updates independently of Forge."
+						"Open the Sterling visualizer in a VS Code panel (default). Overrides 'option run_sterling' in the file so no browser window opens. Uses the Cope and Drag bundled with Forge, unless you pin a specific release with 'forge.copeAndDragVersion'."
 					],
 					"default": "webview",
 					"description": "Where to display the Sterling visualizer when a Forge run produces an instance."
+				},
+				"forge.copeAndDragVersion": {
+					"scope": "resource",
+					"type": "string",
+					"default": "",
+					"markdownDescription": "Which Cope and Drag (the Sterling visualizer) to use when Sterling opens in a VS Code panel.\n\n- Leave empty (default) to use the Cope and Drag bundled with your installed Forge.\n- Set a release tag from [sidprasad/copeanddrag](https://github.com/sidprasad/copeanddrag/releases) (for example `v4.1.0`) and the extension will download that version and serve it instead.\n\nApplies to `webview` mode only. If the download fails, or your Forge is too old to support serving an external visualizer, the extension falls back to Forge's own copy."
 				},
 				"forge.telemetry.enabled": {
 					"scope": "window",
@@ -237,12 +241,11 @@
 		}
 	},
 	"scripts": {
-		"vscode:prepublish": "node ./scripts/fetch-copeanddrag.js --required && npm run compile",
+		"vscode:prepublish": "npm run compile",
 		"compile": "tsc -b",
 		"watch": "tsc -b -w",
-		"fetch-copeanddrag": "node ./scripts/fetch-copeanddrag.js",
 		"lint": "eslint ./client/src ./server/src --ext .ts,.tsx",
-		"postinstall": "cd client && npm install && cd ../server && npm install && cd .. && npm run fetch-copeanddrag",
+		"postinstall": "cd client && npm install && cd ../server && npm install",
 		"test": "sh ./scripts/e2e.sh"
 	},
 	"devDependencies": {
@@ -253,13 +256,13 @@
 		"@typescript-eslint/parser": "^4.23.0",
 		"@vscode/vsce": "^2.24.0",
 		"eslint": "^7.26.0",
-		"fflate": "^0.8.2",
 		"mocha": "^11.7.5",
 		"typescript": "^5.3.3"
 	},
 	"dependencies": {
 		"@firebase/auth": "^0.21.0",
 		"execa": "^9.5.2",
+		"fflate": "^0.8.2",
 		"firebase": "^12.7.0",
 		"firebase-admin": "^13.6.0",
 		"glob": "^8.1.0",

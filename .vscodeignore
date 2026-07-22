@@ -37,10 +37,7 @@ scripts/**
 # - client/out/** (compiled extension code)
 # - server/out/** (compiled language server code)
 # - server/src/parser/grammars/** (ANTLR compiled parser - CRITICAL for LSP!)
-# - client/copeanddrag/** (the vendored Cope and Drag build the extension serves itself;
-#   it is gitignored, so re-include it explicitly rather than relying on defaults)
 # These are automatically included since we exclude *.ts but not *.js
 !server/out/**
 !client/out/**
 !server/src/parser/**
-!client/copeanddrag/**

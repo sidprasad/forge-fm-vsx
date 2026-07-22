@@ -4,33 +4,27 @@ import * as http from 'http';
 import * as path from 'path';
 
 /**
- * Extension-owned Cope and Drag.
+ * Extension-served Cope and Drag.
  *
- * Forge bundles its own copy of the Cope and Drag build and serves it from Racket. That
- * ties the visualizer's release cadence to Forge's: shipping a CnD fix means cutting a
- * Forge release *and* getting every user to `raco pkg update forge`.
+ * By default the extension leaves Cope and Drag to Forge: Forge bundles its own copy and serves it
+ * from Racket (`-O run_sterling headless`), so the visualizer tracks whatever the user's Forge
+ * install ships. That needs no network and is the behaviour when `forge.copeAndDragVersion` is unset.
  *
- * Instead we vendor the build ourselves (see scripts/fetch-copeanddrag.js), serve it from
- * here, and run Forge with `-O run_sterling serve` so it starts only the WebSocket data
- * provider and no static server of its own. CnD then ships on the extension's cadence,
- * which VS Code auto-updates.
+ * When the user pins a specific release in that setting, the extension fetches it at runtime (see
+ * copeanddrag-fetch.ts), serves it from the loopback server below, and runs Forge with
+ * `-O run_sterling serve` so Forge starts only the WebSocket data provider and no static server of
+ * its own. That lets a user opt into a Cope and Drag that updates on the extension's cadence rather
+ * than Forge's.
  *
- * This works without any Forge change because the frontend derives its provider socket
- * from the query string alone — `ws://localhost:${location.search.slice(1)}` — so it does
- * not care which origin served it.
+ * This works without any Forge change because the frontend derives its provider socket from the
+ * query string alone — `ws://localhost:${location.search.slice(1)}` — so it does not care which
+ * origin served it.
  *
- * When the bundle is absent or the installed Forge predates `serve` mode, callers fall
- * back to Forge's own copy (`-O run_sterling headless`), which is the extension's
- * long-standing behaviour.
+ * Any failure of the pinned path (no such release, offline, or a Forge too old for `serve` mode)
+ * falls back to Forge's own copy, which is the extension's default behaviour.
  */
 
-/** Path of the vendored bundle inside the extension, or undefined if it was not vendored. */
-export function getBundlePath(context: vscode.ExtensionContext): string | undefined {
-	const dir = context.asAbsolutePath(path.join('client', 'copeanddrag'));
-	return fs.existsSync(path.join(dir, 'index.html')) ? dir : undefined;
-}
-
-/** Version of the vendored bundle, read from the build's own version.json. For diagnostics. */
+/** Version of a bundle on disk, read from the build's own version.json. For diagnostics. */
 export function getBundleVersion(bundlePath: string): string | undefined {
 	try {
 		const raw = fs.readFileSync(path.join(bundlePath, 'version.json'), 'utf8');
@@ -58,22 +52,34 @@ const MIME: Record<string, string> = {
 };
 
 /**
- * A loopback static file server for the vendored bundle.
+ * A loopback static file server for an extension-served Cope and Drag bundle.
  *
- * One server is shared by every run: only the provider port changes between runs, so
- * there is no reason to churn the static port too. It starts on first use and is disposed
- * when the extension deactivates.
+ * One server is shared by every run: only the provider port changes between runs, so there is no
+ * reason to churn the static port too. The bundle it serves (`rootDir`) can change between runs when
+ * the user re-pins `forge.copeAndDragVersion`, so the root is (re)set on each `ensureStarted` call.
+ * It starts on first use and is disposed when the extension deactivates.
  */
 export class CopeAndDragServer implements vscode.Disposable {
 	private server: http.Server | undefined;
 	private port: number | undefined;
 	private starting: Promise<number> | undefined;
+	private rootDir: string | undefined;
 
-	constructor(private readonly rootDir: string, private readonly output: vscode.OutputChannel) {}
+	constructor(private readonly output: vscode.OutputChannel) {}
 
-	/** Start if needed and return the listening port. Concurrent callers share one start. */
-	async ensureStarted(): Promise<number> {
+	/**
+	 * Start if needed, serving from `rootDir`, and return the listening port. Concurrent callers
+	 * share one start. Re-pointing an already-running server at a different bundle just swaps the
+	 * root — the port is stable, and each run's webview reloads, so no in-flight request straddles
+	 * the swap.
+	 */
+	async ensureStarted(rootDir: string): Promise<number> {
+		const changed = this.rootDir !== rootDir;
+		this.rootDir = rootDir;
 		if (this.port !== undefined) {
+			if (changed) {
+				this.logServing(this.port);
+			}
 			return this.port;
 		}
 		if (!this.starting) {
@@ -96,15 +102,22 @@ export class CopeAndDragServer implements vscode.Disposable {
 				}
 				this.server = server;
 				this.port = addr.port;
-				const version = getBundleVersion(this.rootDir) ?? 'unknown version';
-				// Worth stating plainly: when a visualizer bug is reported, the first question is
-				// which Cope and Drag produced it — the extension's copy or Forge's.
-				this.output.appendLine(
-					`✓ Cope and Drag ${version} (bundled with this extension), served on 127.0.0.1:${addr.port}`
-				);
+				this.logServing(addr.port);
 				resolve(addr.port);
 			});
 		});
+	}
+
+	/**
+	 * Note which Cope and Drag ended up serving. Worth stating plainly: when a visualizer bug is
+	 * reported, the first question is which Cope and Drag produced it — the extension's fetched copy
+	 * or Forge's.
+	 */
+	private logServing(port: number): void {
+		const version = (this.rootDir && getBundleVersion(this.rootDir)) ?? 'unknown version';
+		this.output.appendLine(
+			`✓ Cope and Drag ${version} (fetched by this extension), served on 127.0.0.1:${port}`
+		);
 	}
 
 	private handle(req: http.IncomingMessage, res: http.ServerResponse): void {
@@ -129,6 +142,14 @@ export class CopeAndDragServer implements vscode.Disposable {
 			return;
 		}
 
+		// Only reachable via ensureStarted, which sets rootDir before the server can accept a
+		// request; guard anyway so a stray request can never join against an undefined root.
+		const rootDir = this.rootDir;
+		if (!rootDir) {
+			res.writeHead(503).end();
+			return;
+		}
+
 		// The URL carries the provider port as its query (`/?54321`); only the path selects a file.
 		let pathname: string;
 		try {
@@ -146,9 +167,9 @@ export class CopeAndDragServer implements vscode.Disposable {
 			pathname += 'index.html';
 		}
 
-		const filePath = path.join(this.rootDir, pathname);
+		const filePath = path.join(rootDir, pathname);
 		// Containment check: never serve outside the bundle, whatever the request path says.
-		const rootWithSep = this.rootDir.endsWith(path.sep) ? this.rootDir : this.rootDir + path.sep;
+		const rootWithSep = rootDir.endsWith(path.sep) ? rootDir : rootDir + path.sep;
 		if (!filePath.startsWith(rootWithSep)) {
 			res.writeHead(403).end();
 			return;
