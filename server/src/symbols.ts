@@ -1,6 +1,6 @@
 import { ANTLRInputStream, CommonTokenStream, ParserRuleContext } from 'antlr4ts';
 import { ForgeLexer } from './parser/grammars/ForgeLexer';
-import { ForgeParser, SigDeclContext, PredDeclContext, FunDeclContext, ArrowDeclContext, ParaDeclContext, QuantDeclContext, TestDeclContext, ExampleDeclContext, CmdDeclContext, AssertDeclContext } from './parser/grammars/ForgeParser';
+import { ForgeParser, SigDeclContext, PredDeclContext, FunDeclContext, ArrowDeclContext, ParaDeclContext, QuantDeclContext, TestDeclContext, ExampleDeclContext, CmdDeclContext, AssertDeclContext, NameListContext, NameContext } from './parser/grammars/ForgeParser';
 import { ForgeVisitor } from './parser/grammars/ForgeVisitor';
 import { AbstractParseTreeVisitor } from 'antlr4ts/tree/AbstractParseTreeVisitor';
 import { Range } from 'vscode-languageserver';
@@ -130,63 +130,76 @@ class SymbolExtractorVisitor extends AbstractParseTreeVisitor<void> implements F
     }
 
     /**
+     * Flatten a `nameList` into all of its names.
+     *
+     * The grammar makes `nameList` right-recursive (`name (',' nameList)?`), so a multi-name
+     * declaration such as `sig A, B extends C {}` or `left, right: lone Node` nests as
+     * name(A) → nameList → name(B) → … . Reading only `.name()` (as the declaration visitors
+     * once did) silently dropped every name after the first, so those extra names were absent
+     * from the outline, go-to-definition, and hover.
+     */
+    private namesOf(nameList: NameListContext | undefined): NameContext[] {
+        const names: NameContext[] = [];
+        for (let cur = nameList; cur; cur = cur.nameList()) {
+            const name = cur.name();
+            if (name) {
+                names.push(name);
+            }
+        }
+        return names;
+    }
+
+    /**
      * Extract signature declarations
      */
     visitSigDecl(ctx: SigDeclContext): void {
-        // Get the first name from nameList
-        const nameList = ctx.nameList();
-        const nameContext = nameList.name();
-        const nameToken = nameContext.IDENTIFIER_TOK();
-        
-        if (nameToken) {
+        // A single declaration may introduce several sigs at once, e.g.
+        // `sig Undergrad, Grad extends Student {}`. The modifiers and extension apply to all
+        // of them, so build that shared prefix/suffix once and emit one symbol per name.
+        let prefix = '';
+        if (ctx.ABSTRACT_TOK()) prefix += 'abstract ';
+        if (ctx.mult()) prefix += ctx.mult()!.text + ' ';
+        const ext = ctx.sigExt() ? ' ' + ctx.sigExt()!.text : '';
+
+        const previousSigName = this.currentSigName;
+        let firstSigName: string | undefined;
+
+        for (const nameContext of this.namesOf(ctx.nameList())) {
+            const nameToken = nameContext.IDENTIFIER_TOK();
+            if (!nameToken) {
+                continue;
+            }
             const line = nameToken.symbol.line - 1; // Convert to 0-based
             const column = nameToken.symbol.charPositionInLine;
             const docComment = this.extractDocComment(line);
-            
-            // Build detailed signature information
-            let detail = '';
-            if (ctx.ABSTRACT_TOK()) detail += 'abstract ';
-            if (ctx.mult()) detail += ctx.mult()!.text + ' ';
-            detail += 'sig ' + nameToken.text;
-            if (ctx.sigExt()) {
-                detail += ' ' + ctx.sigExt()!.text;
+
+            if (firstSigName === undefined) {
+                firstSigName = nameToken.text;
             }
-            
-            // Store current sig name for field processing
-            const previousSigName = this.currentSigName;
-            this.currentSigName = nameToken.text;
-            
+
             this.symbols.push({
                 name: nameToken.text,
                 kind: SymbolKind.Sig,
                 range: Range.create(line, column, line, column + nameToken.text.length),
                 fullRange: this.fullRangeOf(ctx),
-                detail: detail.trim(),
+                detail: (prefix + 'sig ' + nameToken.text + ext).trim(),
                 documentation: docComment
             });
-            
-            // Visit children to capture fields
-            this.visitChildren(ctx);
-            
-            // Restore previous sig name
-            this.currentSigName = previousSigName;
         }
+
+        // Fields in the shared body belong to every name in the list; `currentSigName` only
+        // drives the field's display detail, so attribute them to the first name.
+        this.currentSigName = firstSigName ?? previousSigName;
+        this.visitChildren(ctx);
+        this.currentSigName = previousSigName;
     }
 
     /**
      * Extract field declarations (arrowDecl) from signatures
      */
     visitArrowDecl(ctx: ArrowDeclContext): void {
-        const nameList = ctx.nameList();
-        const nameContext = nameList.name();
-        const nameToken = nameContext.IDENTIFIER_TOK();
-        
-        if (nameToken && this.currentSigName) {
-            const line = nameToken.symbol.line - 1;
-            const column = nameToken.symbol.charPositionInLine;
-            const docComment = this.extractDocComment(line);
-            
-            // Build field type information
+        if (this.currentSigName) {
+            // Fields can be declared as a group sharing one type, e.g. `left, right: lone Node`.
             let fieldType = '';
             if (ctx.arrowMult()) {
                 fieldType = ctx.arrowMult()!.text + ' ';
@@ -194,18 +207,26 @@ class SymbolExtractorVisitor extends AbstractParseTreeVisitor<void> implements F
             if (ctx.arrowExpr()) {
                 fieldType += ctx.arrowExpr().text;
             }
-            
-            const detail = `${nameToken.text}: ${fieldType}`;
-            
-            this.symbols.push({
-                name: nameToken.text,
-                kind: SymbolKind.Field,
-                range: Range.create(line, column, line, column + nameToken.text.length),
-                detail: `field in ${this.currentSigName}: ${fieldType}`,
-                documentation: docComment
-            });
+
+            for (const nameContext of this.namesOf(ctx.nameList())) {
+                const nameToken = nameContext.IDENTIFIER_TOK();
+                if (!nameToken) {
+                    continue;
+                }
+                const line = nameToken.symbol.line - 1;
+                const column = nameToken.symbol.charPositionInLine;
+                const docComment = this.extractDocComment(line);
+
+                this.symbols.push({
+                    name: nameToken.text,
+                    kind: SymbolKind.Field,
+                    range: Range.create(line, column, line, column + nameToken.text.length),
+                    detail: `field in ${this.currentSigName}: ${fieldType}`,
+                    documentation: docComment
+                });
+            }
         }
-        
+
         this.visitChildren(ctx);
     }
 
@@ -285,34 +306,32 @@ class SymbolExtractorVisitor extends AbstractParseTreeVisitor<void> implements F
      * Extract quantified variable declarations (all s: Node, some n: Person, etc.)
      */
     visitQuantDecl(ctx: QuantDeclContext): void {
-        const nameList = ctx.nameList();
-        const nameContext = nameList.name();
-        const nameToken = nameContext.IDENTIFIER_TOK();
-        
-        if (nameToken) {
+        // A quantifier can bind several variables of one type, e.g. `all x, y: A | ...`.
+        let varType = '';
+        if (ctx.SET_TOK()) {
+            varType = 'set ';
+        }
+        if (ctx.expr()) {
+            varType += ctx.expr().text;
+        }
+
+        for (const nameContext of this.namesOf(ctx.nameList())) {
+            const nameToken = nameContext.IDENTIFIER_TOK();
+            if (!nameToken) {
+                continue;
+            }
             const line = nameToken.symbol.line - 1;
             const column = nameToken.symbol.charPositionInLine;
-            
-            // Build variable type information
-            let varType = '';
-            if (ctx.SET_TOK()) {
-                varType = 'set ';
-            }
-            if (ctx.expr()) {
-                varType += ctx.expr().text;
-            }
-            
-            const detail = `${nameToken.text}: ${varType}`;
-            
+
             this.symbols.push({
                 name: nameToken.text,
                 kind: SymbolKind.Variable,
                 range: Range.create(line, column, line, column + nameToken.text.length),
-                detail: detail,
+                detail: `${nameToken.text}: ${varType}`,
                 documentation: undefined
             });
         }
-        
+
         this.visitChildren(ctx);
     }
 
@@ -320,30 +339,28 @@ class SymbolExtractorVisitor extends AbstractParseTreeVisitor<void> implements F
      * Extract parameter declarations from predicates/functions
      */
     visitParaDecl(ctx: ParaDeclContext): void {
-        const nameList = ctx.nameList();
-        const nameContext = nameList.name();
-        const nameToken = nameContext.IDENTIFIER_TOK();
-        
-        if (nameToken) {
+        // A parameter group shares one type, e.g. `pred p[x, y: A]`.
+        let paramType = '';
+        if (ctx.helperMult()) {
+            paramType = ctx.helperMult()!.text + ' ';
+        }
+        if (ctx.expr()) {
+            paramType += ctx.expr().text;
+        }
+
+        for (const nameContext of this.namesOf(ctx.nameList())) {
+            const nameToken = nameContext.IDENTIFIER_TOK();
+            if (!nameToken) {
+                continue;
+            }
             const line = nameToken.symbol.line - 1;
             const column = nameToken.symbol.charPositionInLine;
-            
-            // Build parameter type information
-            let paramType = '';
-            if (ctx.helperMult()) {
-                paramType = ctx.helperMult()!.text + ' ';
-            }
-            if (ctx.expr()) {
-                paramType += ctx.expr().text;
-            }
-            
-            const detail = `parameter ${nameToken.text}: ${paramType}`;
 
             this.symbols.push({
                 name: nameToken.text,
                 kind: SymbolKind.Parameter,
                 range: Range.create(line, column, line, column + nameToken.text.length),
-                detail: detail,
+                detail: `parameter ${nameToken.text}: ${paramType}`,
                 documentation: undefined
             });
         }
