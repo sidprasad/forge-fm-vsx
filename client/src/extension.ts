@@ -62,16 +62,29 @@ function setForgeSterlingWaiting(waiting: boolean): void {
 }
 
 
-async function getUserId(context) {
+async function getUserId(context: vscode.ExtensionContext): Promise<string> {
 	const UID_KEY = "FORGE_UID";
 
+	// `secrets.get` resolves to the stored value, or `undefined` for a missing key — it does not
+	// throw — so a first run is a falsy result, not an exception. (The previous code called
+	// `.toString()` on the pending promise rather than its resolved value, so `uid` was always the
+	// literal "[object Promise]": the same id for every user, and one that was never persisted.)
+	let uid: string | undefined;
 	try {
-		var uid = await context.secrets.get(UID_KEY).toString();
+		uid = await context.secrets.get(UID_KEY);
+	} catch {
+		// Secret storage unavailable; fall through and mint a fresh id.
 	}
-	catch {
-		uid = uuidv4().toString();
-		await context.secrets.store(UID_KEY, uid);
+
+	if (!uid) {
+		uid = uuidv4();
+		try {
+			await context.secrets.store(UID_KEY, uid);
+		} catch {
+			// Best-effort persistence: a fresh id per session is acceptable if storage fails.
+		}
 	}
+
 	forgeOutput.appendLine(`Your anonymous ID is ${uid}.`);
 	return uid;
 }
