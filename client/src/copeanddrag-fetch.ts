@@ -7,11 +7,10 @@ import type * as vscode from 'vscode';
 /**
  * Fetch a Cope and Drag release into a local cache at runtime.
  *
- * The extension no longer vendors a Cope and Drag build at package time. Instead, when the user
- * pins a release in `forge.copeAndDragVersion`, this module materializes that release's
+ * The extension no longer vendors a Cope and Drag build at package time. Instead, when
+ * `forge.copeAndDragVersion` selects a release (including the default), this module materializes its
  * `sterling-forge.zip` GitHub asset into the extension's global storage, from where
- * `CopeAndDragServer` serves it. The default (unset) path never calls in here — it uses Forge's
- * own bundled copy.
+ * `CopeAndDragServer` serves it. An explicit empty setting uses Forge's own bundled copy.
  *
  * This is the same hardened download/extract that `scripts/fetch-copeanddrag.js` used to run at
  * build time; it now runs on demand and caches per tag, so a pinned version is fetched once and is
