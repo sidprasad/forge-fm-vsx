@@ -6,22 +6,19 @@ import * as path from 'path';
 /**
  * Extension-served Cope and Drag.
  *
- * By default the extension leaves Cope and Drag to Forge: Forge bundles its own copy and serves it
- * from Racket (`-O run_sterling headless`), so the visualizer tracks whatever the user's Forge
- * install ships. That needs no network and is the behaviour when `forge.copeAndDragVersion` is unset.
- *
- * When the user pins a specific release in that setting, the extension fetches it at runtime (see
- * copeanddrag-fetch.ts), serves it from the loopback server below, and runs Forge with
+ * The extension fetches the release selected by `forge.copeAndDragVersion` at runtime (see
+ * copeanddrag-fetch.ts), including the manifest's default, serves it from the loopback server below,
+ * and runs Forge with
  * `-O run_sterling serve` so Forge starts only the WebSocket data provider and no static server of
- * its own. That lets a user opt into a Cope and Drag that updates on the extension's cadence rather
- * than Forge's.
+ * its own. The default release updates on the extension's cadence, independently of Forge's.
+ * An explicit empty setting uses Forge's bundled copy (`-O run_sterling headless`) without a download.
  *
  * This works without any Forge change because the frontend derives its provider socket from the
  * query string alone — `ws://localhost:${location.search.slice(1)}` — so it does not care which
  * origin served it.
  *
- * Any failure of the pinned path (no such release, offline, or a Forge too old for `serve` mode)
- * falls back to Forge's own copy, which is the extension's default behaviour.
+ * Any failure of the selected release (no such release, offline, or a Forge too old for `serve` mode)
+ * falls back to Forge's own copy.
  */
 
 /** Version of a bundle on disk, read from the build's own version.json. For diagnostics. */

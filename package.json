@@ -3,7 +3,7 @@
 	"description": "Editor support for Forge FM",
 	"author": "Siddhartha Prasad",
 	"license": "MIT",
-	"version": "0.2.9",
+	"version": "0.2.10",
 	"repository": {
 		"type": "git",
 		"url": ""
@@ -114,7 +114,7 @@
 					],
 					"enumDescriptions": [
 						"Open the Sterling visualizer in your system's default web browser. Uses the Cope and Drag bundled with Forge.",
-						"Open the Sterling visualizer in a VS Code panel (default). Overrides 'option run_sterling' in the file so no browser window opens. Uses the Cope and Drag bundled with Forge, unless you pin a specific release with 'forge.copeAndDragVersion'."
+						"Open the Sterling visualizer in a VS Code panel (default). Overrides 'option run_sterling' in the file so no browser window opens. Uses the release selected by 'forge.copeAndDragVersion' (v4.8.0 by default)."
 					],
 					"default": "webview",
 					"description": "Where to display the Sterling visualizer when a Forge run produces an instance."
@@ -122,8 +122,8 @@
 				"forge.copeAndDragVersion": {
 					"scope": "resource",
 					"type": "string",
-					"default": "",
-					"markdownDescription": "Which Cope and Drag (the Sterling visualizer) to use when Sterling opens in a VS Code panel.\n\n- Leave empty (default) to use the Cope and Drag bundled with your installed Forge.\n- Set a release tag from [sidprasad/copeanddrag](https://github.com/sidprasad/copeanddrag/releases) (for example `v4.1.0`) and the extension will download that version and serve it instead.\n\nApplies to `webview` mode only. If the download fails, or your Forge is too old to support serving an external visualizer, the extension falls back to Forge's own copy."
+					"default": "v4.8.0",
+					"markdownDescription": "Which Cope and Drag (the Sterling visualizer) to use when Sterling opens in a VS Code panel.\n\n- By default, the extension downloads and caches `v4.8.0`.\n- Set another release tag from [sidprasad/copeanddrag](https://github.com/sidprasad/copeanddrag/releases) to use that version instead.\n- Set an empty string to use the Cope and Drag bundled with your installed Forge.\n\nApplies to `webview` mode only. If the download fails, or your Forge is too old to support serving an external visualizer, the extension falls back to Forge's own copy."
 				},
 				"forge.telemetry.enabled": {
 					"scope": "window",
