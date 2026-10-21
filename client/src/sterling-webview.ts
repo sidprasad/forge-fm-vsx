@@ -21,6 +21,7 @@ let disposingFromExit = false;
 // a new run takes over the panel the previous run's (possibly delayed) exit must NOT tear down
 // the live panel — it would leave the new run staring at a closed webview. Guard dispose by token.
 let activeRunToken: string | undefined;
+let activeRunIsCurrent: (() => boolean) | undefined;
 
 /**
  * Find a free TCP port by binding to port 0 on loopback and reading the assigned port.
@@ -98,15 +99,18 @@ export async function findSterlingPorts(): Promise<{ staticPort: number; provide
  * `runToken` identifies the run that owns the panel from this point on, so a later run's
  * teardown can tell whether it still owns the panel before disposing it.
  */
-export async function openSterlingWebview(rawUrl: string, forgeRunner: ForgeRunner, runToken: string): Promise<void> {
-	// This run now owns the panel. A previous run's pending exit will see a mismatched token
-	// and leave the panel alone.
-	activeRunToken = runToken;
+export async function openSterlingWebview(
+	rawUrl: string, forgeRunner: ForgeRunner, runToken: string, isCurrent: () => boolean = () => true
+): Promise<void> {
+	if (!isCurrent()) { return; }
 
 	// asExternalUri preserves the path + `?<provider-port>` query and, under Remote/Codespaces,
 	// would forward the static port. (Remote support is out of scope for now; locally this is
 	// a no-op that returns the same 127.0.0.1 URL.)
 	const externalUri = await vscode.env.asExternalUri(vscode.Uri.parse(rawUrl));
+	if (!isCurrent()) { return; }
+	activeRunToken = runToken;
+	activeRunIsCurrent = isCurrent;
 	const html = getSterlingHtml(externalUri);
 
 	if (sterlingPanel) {
@@ -124,9 +128,11 @@ export async function openSterlingWebview(rawUrl: string, forgeRunner: ForgeRunn
 	sterlingPanel.webview.html = html;
 
 	sterlingPanel.onDidDispose(() => {
+		const canContinue = activeRunIsCurrent?.();
 		sterlingPanel = undefined;
 		activeRunToken = undefined;
-		if (!disposingFromExit) {
+		activeRunIsCurrent = undefined;
+		if (!disposingFromExit && canContinue) {
 			// User closed the panel: stop the Forge run the same way the "Continue" button does.
 			forgeRunner.sendInput('\n');
 		}
