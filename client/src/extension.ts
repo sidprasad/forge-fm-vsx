@@ -304,6 +304,13 @@ export async function activate(context: ExtensionContext) {
 
 		const fileURI = editor?.document.uri;
 		const filepath = fileURI?.fsPath;
+		if (fileURI.scheme !== 'file' || !filepath.endsWith('.frg')) {
+			vscode.window.showInformationMessage('Save and select a Forge (.frg) file before running it.');
+			return;
+		}
+		const session = forgeRunner.beginRun();
+		markSterlingWebviewStale();
+		setForgeSterlingWaiting(false);
 		const runId = uuidv4();
 
 		const forgeSettings = vscode.workspace.getConfiguration('forge');
@@ -314,20 +321,6 @@ export async function activate(context: ExtensionContext) {
 		}
 		forgeOutput.show();
 		appendRunHeader(forgeOutput, filepath, runId);
-
-		// Always auto-save before any run
-		if (!editor?.document.save()) {
-			console.error(`Could not save ${filepath}`);
-			vscode.window.showErrorMessage(`Could not save ${filepath}`);
-			return null;
-		}
-
-		// Try to only run active forge file
-		if (filepath.split(/\./).pop() !== 'frg') {
-			vscode.window.showInformationMessage('Click on the Forge file first before hitting the run button :)');
-			console.log(`cannot run file ${filepath}`);
-			return;
-		}
 
 		let myStderr = '';
 		let runFailed = false;
@@ -346,7 +339,6 @@ export async function activate(context: ExtensionContext) {
 		// Fetch and serve the configured Cope and Drag release, with Forge in `serve` mode (data
 		// provider only). An empty setting or a failed release load uses Forge's copy in `headless` mode.
 		const useWebview = forgeSettings.get<string>('openSterlingIn', 'webview') === 'webview';
-		let extraArgs: string[] | undefined;
 		let sterlingUrl: string | undefined;
 		let sterlingWebviewOpened = false;
 		// Marks that *we* are serving the visualizer, which changes both the Forge args and
@@ -359,62 +351,70 @@ export async function activate(context: ExtensionContext) {
 		let readinessPort: number | undefined;
 		// Flipped true when the Forge process is gone, so the readiness poll stops chasing it.
 		let processExited = false;
-		if (useWebview) {
-			let cndStaticPort: number | undefined;
-			const desiredVersion = forgeSettings.get<string>('copeAndDragVersion', '').trim();
-			// Serve our own Cope and Drag only when a release tag is selected AND the
-			// installed Forge supports `serve` mode. Otherwise Forge serves its own copy (headless).
-			if (desiredVersion !== '' && cndServer && await forgeRunner.supportsServeMode()) {
-				try {
-					const bundleDir = await vscode.window.withProgress(
-						{
-							location: vscode.ProgressLocation.Notification,
-							title: `Loading Cope and Drag ${desiredVersion}…`
-						},
-						() => ensureReleaseFetched(desiredVersion, context.globalStorageUri.fsPath, forgeOutput)
-					);
-					cndStaticPort = await cndServer.ensureStarted(bundleDir);
-				} catch (err) {
-					// Surface a failed release load and fall back to Forge's own copy.
-					forgeOutput.appendLine(`! Could not use Cope and Drag ${desiredVersion} (${err}); using Forge's copy.`);
-					void vscode.window.showWarningMessage(
-						`Could not load Cope and Drag ${desiredVersion}; falling back to the version shipped with Forge.`
-					);
-					cndStaticPort = undefined;
+		const prepare = async (): Promise<string[] | undefined> => {
+			let extraArgs: string[] | undefined;
+			if (useWebview) {
+				let cndStaticPort: number | undefined;
+				const desiredVersion = forgeSettings.get<string>('copeAndDragVersion', '').trim();
+				// Serve our own Cope and Drag only when a release tag is selected AND the
+				// installed Forge supports `serve` mode. Otherwise Forge serves its own copy (headless).
+				if (desiredVersion !== '' && cndServer && await forgeRunner.supportsServeMode()) {
+					if (!session.isCurrent || session.isCancelled) { return; }
+					try {
+						const bundleDir = await vscode.window.withProgress(
+							{
+								location: vscode.ProgressLocation.Notification,
+								title: `Loading Cope and Drag ${desiredVersion}…`
+							},
+							() => ensureReleaseFetched(desiredVersion, context.globalStorageUri.fsPath, forgeOutput)
+						);
+						if (!session.isCurrent || session.isCancelled) { return; }
+						cndStaticPort = await cndServer.ensureStarted(bundleDir);
+					} catch (err) {
+						if (!session.isCurrent || session.isCancelled) { return; }
+						// Surface a failed release load and fall back to Forge's own copy.
+						forgeOutput.appendLine(`! Could not use Cope and Drag ${desiredVersion} (${err}); using Forge's copy.`);
+						void vscode.window.showWarningMessage(
+							`Could not load Cope and Drag ${desiredVersion}; falling back to the version shipped with Forge.`
+						);
+						cndStaticPort = undefined;
+					}
+				}
+				if (!session.isCurrent || session.isCancelled) { return; }
+
+				if (cndStaticPort !== undefined) {
+					const providerPort = await findFreePort();
+					extraArgs = [
+						'-O', 'run_sterling', 'serve',
+						'-O', 'sterling_port', String(providerPort),
+					];
+					sterlingUrl = `http://127.0.0.1:${cndStaticPort}/?${providerPort}`;
+					extensionServed = true;
+					readinessPort = providerPort;
+				} else {
+					const { staticPort, providerPort } = await findSterlingPorts();
+					extraArgs = [
+						'-O', 'run_sterling', 'headless',
+						'-O', 'sterling_static_port', String(staticPort),
+						'-O', 'sterling_port', String(providerPort),
+					];
+					sterlingUrl = `http://127.0.0.1:${staticPort}/?${providerPort}`;
+					readinessPort = staticPort;
 				}
 			}
-
-			if (cndStaticPort !== undefined) {
-				const providerPort = await findFreePort();
-				extraArgs = [
-					'-O', 'run_sterling', 'serve',
-					'-O', 'sterling_port', String(providerPort),
-				];
-				sterlingUrl = `http://127.0.0.1:${cndStaticPort}/?${providerPort}`;
-				extensionServed = true;
-				readinessPort = providerPort;
-			} else {
-				const { staticPort, providerPort } = await findSterlingPorts();
-				extraArgs = [
-					'-O', 'run_sterling', 'headless',
-					'-O', 'sterling_static_port', String(staticPort),
-					'-O', 'sterling_port', String(providerPort),
-				];
-				sterlingUrl = `http://127.0.0.1:${staticPort}/?${providerPort}`;
-				readinessPort = staticPort;
-			}
-		}
+			return extraArgs;
+		};
 
 		// Open the Sterling panel exactly once, from whichever readiness signal wins the race:
 		// the Forge log line (fast path, below) or the port poll (robust path, further down).
 		const openSterlingOnce = () => {
-			if (!useWebview || !sterlingUrl || sterlingWebviewOpened) {
+			if (!session.isCurrent || session.isCancelled || processExited || !useWebview || !sterlingUrl || sterlingWebviewOpened) {
 				return;
 			}
 			sterlingWebviewOpened = true;
 			setForgeSterlingWaiting(true);
 			endSolvePhase();
-			void openSterlingWebview(sterlingUrl, forgeRunner, runId);
+			void openSterlingWebview(sterlingUrl, forgeRunner, runId, () => session.isCurrent && !session.isCancelled && !processExited);
 		};
 
 		const stdoutListener = (data: string) => {
@@ -447,6 +447,7 @@ export async function activate(context: ExtensionContext) {
 
 		const exitListener = (code: number | null) => {
 			processExited = true;
+			runFailed = code !== 0 && !session.isCancelled;
 			setForgeSterlingWaiting(false);
 			// Forge's data provider dies with the process, so the visualization is no longer live
 			// (in `headless` mode Forge's static server goes too; in `serve` mode ours stays up,
@@ -457,12 +458,12 @@ export async function activate(context: ExtensionContext) {
 			if (useWebview) {
 				markSterlingWebviewStale(runId);
 			}
-			if (!forgeRunner.isKilledManually()) {
+			if (!session.isCancelled) {
 				if (myStderr !== '') {
 					forgeRunner.sendEvalErrors(myStderr, fileURI, forgeEvalDiagnostics);
 				} else {
 					ForgeRunner.showFileWithOpts(filepath, null, null);
-					forgeOutput.appendLine('Finished running.');
+					forgeOutput.appendLine(runFailed ? `Forge exited unsuccessfully (code ${code}).` : 'Finished running.');
 				}
 			} else {
 				ForgeRunner.showFileWithOpts(filepath, null, null);
@@ -491,31 +492,41 @@ export async function activate(context: ExtensionContext) {
 			title: `Forge: running ${path.basename(filepath)}`,
 			cancellable: true
 		}, async (_progress, token) => {
-			token.onCancellationRequested(() => forgeRunner.kill(true));
-			await solvePhaseEnded;
+			const cancellation = token.onCancellationRequested(() => {
+				session.cancel();
+				endSolvePhase();
+			});
+			try {
+				await solvePhaseEnded;
+			} finally {
+				cancellation.dispose();
+			}
 		});
 
 		// Robust readiness: open the panel when the visualizer's server is actually listening,
 		// independent of what Forge prints. This is what makes a reworded Forge log line
 		// harmless — the port coming up still opens the panel. A slow solve just brings the port
 		// up later; the poll waits it out rather than reporting a false failure.
-		if (useWebview && readinessPort !== undefined) {
-			void waitForPort(readinessPort, () => !processExited).then((up) => {
-				if (up) {
-					openSterlingOnce();
-				}
-			});
-		}
+		const onStart = () => {
+			if (useWebview && readinessPort !== undefined) {
+				void waitForPort(readinessPort, () => session.isCurrent && !session.isCancelled && !processExited).then((up) => {
+					if (up) {
+						openSterlingOnce();
+					}
+				});
+			}
+		};
 
 		try {
 			await forgeRunner.runFile(filepath, {
 				onStdout: stdoutListener,
 				onStderr: stderrListener,
 				onExit: exitListener,
-				extraArgs
-			});
+				prepare,
+				onStart
+			}, session);
 
-			if (isLoggingEnabled && editor) {
+			if (session.isCurrent && !session.isCancelled && isLoggingEnabled && editor) {
 				const documentData = vscode.workspace.textDocuments.map((d) => {
 					const focusedDoc = (d === editor.document);
 					return textDocumentToLog(d, focusedDoc);
@@ -525,6 +536,7 @@ export async function activate(context: ExtensionContext) {
 				logger.log_payload(documentData, LogLevel.INFO, Event.FORGE_RUN);
 			}
 		} catch (error) {
+			if (!session.isCurrent || session.isCancelled) { return; }
 			runFailed = true;
 			const log = textDocumentToLog(editor.document, true);
 			log['error'] = `Could not run Forge process: ${error}`;
@@ -545,22 +557,24 @@ export async function activate(context: ExtensionContext) {
 			endSolvePhase();
 			// If the process failed to spawn, `exit` never fired; stop the readiness poll here.
 			processExited = true;
-		}
 
-		// Run finished (normally, by error, or by Stop/Cancel): clear state, reflect outcome.
-		setForgeRunning(false);
-		setForgeSterlingWaiting(false);
-		if (runFailed || (myStderr.trim() !== '' && !forgeRunner.isKilledManually())) {
-			statusBar.setRunResult('errors');
-		} else if (forgeRunner.isKilledManually()) {
-			statusBar.setRunResult('stopped');
-		} else {
-			statusBar.setRunResult('ok');
+			// Run finished (normally, by error, or by Stop/Cancel): clear state, reflect outcome.
+			if (session.isCurrent) {
+				setForgeRunning(false);
+				setForgeSterlingWaiting(false);
+				if (session.isCancelled) {
+					statusBar.setRunResult('stopped');
+				} else if (runFailed || myStderr.trim() !== '') {
+					statusBar.setRunResult('errors');
+				} else {
+					statusBar.setRunResult('ok');
+				}
+			}
 		}
 	});
 
 	const stopRun = vscode.commands.registerCommand('forge.stopRun', () => {
-		forgeRunner.kill(true);
+		forgeRunner.kill();
 	});
 
 	const continueRun = vscode.commands.registerCommand('forge.continueRun', () => {
@@ -685,7 +699,7 @@ export async function activate(context: ExtensionContext) {
 
 export function deactivate(): Thenable<void> | undefined {
 	const forgeRunner = ForgeRunner.getInstance(forgeOutput);
-	forgeRunner.kill(false);
+	forgeRunner.kill();
 	// Close the Sterling panel outright on shutdown (no token: unconditional).
 	disposeSterlingWebview();
 

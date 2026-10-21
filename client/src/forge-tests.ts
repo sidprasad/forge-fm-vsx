@@ -2,6 +2,8 @@ import * as vscode from 'vscode';
 import { LanguageClient } from 'vscode-languageclient/node';
 import { ForgeRunner } from './forge-runner';
 import { parseTestResults, stripAnsi } from './forge-test-parse';
+import * as statusBar from './status-bar';
+import { markSterlingWebviewStale } from './sterling-webview';
 
 /**
  * Native Test Explorer for Forge — a *results view*, not a per-command runner.
@@ -84,90 +86,119 @@ export function registerForgeTests(
 
 	const runHandler = async (request: vscode.TestRunRequest, token: vscode.CancellationToken): Promise<void> => {
 		const run = controller.createTestRun(request);
-		token.onCancellationRequested(() => forgeRunner.kill(true));
-
-		// Resolve the request to whole files: running anything (a file or one of its tests) runs the
-		// entire file, since that is the only granularity Forge supports.
-		const fileItems: vscode.TestItem[] = [];
-		const addFile = (item: vscode.TestItem) => {
-			const file = item.parent ?? item;
-			if (!fileItems.includes(file)) {
-				fileItems.push(file);
-			}
-		};
-		if (request.include && request.include.length > 0) {
-			request.include.forEach(addFile);
-		} else {
-			controller.items.forEach(addFile);
+		if (token.isCancellationRequested) {
+			run.end();
+			return;
 		}
+		const session = forgeRunner.beginRun();
+		const cancellation = token.onCancellationRequested(() => session.cancel());
+		let failed = false;
+		markSterlingWebviewStale();
+		vscode.commands.executeCommand('setContext', 'forge.isRunning', true);
+		vscode.commands.executeCommand('setContext', 'forge.sterlingWaiting', false);
+		statusBar.setRunning('tests');
 
-		for (const fileItem of fileItems) {
-			if (!fileItem.uri) {
-				continue;
-			}
-			// Honor a file-level exclusion (e.g. "run everything except this file").
-			if (request.exclude?.includes(fileItem)) {
-				continue;
-			}
-			const tests: vscode.TestItem[] = [];
-			fileItem.children.forEach(c => { if (!request.exclude?.includes(c)) { tests.push(c); } });
-			if (tests.length === 0) {
-				continue;
-			}
-
-			tests.forEach(t => run.enqueued(t));
-			if (token.isCancellationRequested) {
-				tests.forEach(t => run.skipped(t));
-				continue;
-			}
-			tests.forEach(t => run.started(t));
-
-			const uri = fileItem.uri;
-			let stdout = '';
-			let stderr = '';
-			try {
-				// Disable Sterling so a failing test does not block waiting for the visualizer.
-				await forgeRunner.runFile(uri.fsPath, {
-					extraArgs: ['-O', 'run_sterling', 'off'],
-					onStdout: d => { stdout += d; },
-					onStderr: d => { stderr += d; },
-					onExit: () => { /* results parsed below */ }
-				});
-			} catch (err) {
-				tests.forEach(t => run.errored(t, new vscode.TestMessage(`Could not run Forge: ${err}`)));
-				continue;
+		try {
+			// Resolve the request to whole files: running anything (a file or one of its tests) runs the
+			// entire file, since that is the only granularity Forge supports.
+			const fileItems: vscode.TestItem[] = [];
+			const addFile = (item: vscode.TestItem) => {
+				const file = item.parent ?? item;
+				if (!fileItems.includes(file)) {
+					fileItems.push(file);
+				}
+			};
+			if (request.include && request.include.length > 0) {
+				request.include.forEach(addFile);
+			} else {
+				controller.items.forEach(addFile);
 			}
 
-			stdout = stripAnsi(stdout);
-			stderr = stripAnsi(stderr);
-			run.appendOutput(stdout.replace(/\r?\n/g, '\r\n'), undefined, fileItem);
+			for (const fileItem of fileItems) {
+				if (!fileItem.uri) {
+					continue;
+				}
+				// Honor a file-level exclusion (e.g. "run everything except this file").
+				if (request.exclude?.includes(fileItem)) {
+					continue;
+				}
+				const tests: vscode.TestItem[] = [];
+				fileItem.children.forEach(c => { if (!request.exclude?.includes(c)) { tests.push(c); } });
+				if (tests.length === 0) {
+					continue;
+				}
 
-			const results = parseTestResults(stdout, stderr);
-			const anyResults = results.size > 0;
+				tests.forEach(t => run.enqueued(t));
+				if (!session.isCurrent || session.isCancelled || token.isCancellationRequested) {
+					tests.forEach(t => run.skipped(t));
+					continue;
+				}
+				tests.forEach(t => run.started(t));
 
-			for (const t of tests) {
-				const outcome = results.get(t.id);
-				if (outcome) {
-					if (outcome.passed) {
-						run.passed(t);
-					} else {
-						const msg = new vscode.TestMessage(outcome.message || 'Test failed');
-						if (outcome.line !== undefined) {
-							msg.location = new vscode.Location(uri, new vscode.Position(outcome.line, outcome.col ?? 0));
-						}
-						run.failed(t, msg);
+				const uri = fileItem.uri;
+				let stdout = '';
+				let stderr = '';
+				try {
+					// Disable Sterling so a failing test does not block waiting for the visualizer.
+					await forgeRunner.runFile(uri.fsPath, {
+						extraArgs: ['-O', 'run_sterling', 'off'],
+						onStdout: d => { stdout += d; },
+						onStderr: d => { stderr += d; },
+						onExit: () => { /* results parsed below */ }
+					}, session);
+				} catch (err) {
+					if (!session.isCurrent || session.isCancelled) {
+						tests.forEach(t => run.skipped(t));
+						continue;
 					}
-				} else if (!anyResults && stderr.trim()) {
-					// Nothing parsed and Forge wrote to stderr → likely a compile error, not a result.
-					run.errored(t, new vscode.TestMessage(stderr.trim().slice(0, 1000)));
-				} else {
-					// Forge stopped before reaching this test (test_keep=first after a failure).
-					run.skipped(t);
+					failed = true;
+					tests.forEach(t => run.errored(t, new vscode.TestMessage(`Could not run Forge: ${err}`)));
+					continue;
+				}
+				if (!session.isCurrent || session.isCancelled) {
+					tests.forEach(t => run.skipped(t));
+					continue;
+				}
+
+				stdout = stripAnsi(stdout);
+				stderr = stripAnsi(stderr);
+				run.appendOutput(stdout.replace(/\r?\n/g, '\r\n'), undefined, fileItem);
+
+				const results = parseTestResults(stdout, stderr);
+				const anyResults = results.size > 0;
+
+				for (const t of tests) {
+					const outcome = results.get(t.id);
+					if (outcome) {
+						if (outcome.passed) {
+							run.passed(t);
+						} else {
+							failed = true;
+							const msg = new vscode.TestMessage(outcome.message || 'Test failed');
+							if (outcome.line !== undefined) {
+								msg.location = new vscode.Location(uri, new vscode.Position(outcome.line, outcome.col ?? 0));
+							}
+							run.failed(t, msg);
+						}
+					} else if (!anyResults && stderr.trim()) {
+						failed = true;
+						// Nothing parsed and Forge wrote to stderr → likely a compile error, not a result.
+						run.errored(t, new vscode.TestMessage(stderr.trim().slice(0, 1000)));
+					} else {
+						// Forge stopped before reaching this test (test_keep=first after a failure).
+						run.skipped(t);
+					}
 				}
 			}
-		}
 
-		run.end();
+		} finally {
+			cancellation.dispose();
+			run.end();
+			if (session.isCurrent) {
+				vscode.commands.executeCommand('setContext', 'forge.isRunning', false);
+				statusBar.setRunResult(session.isCancelled ? 'stopped' : failed ? 'errors' : 'ok');
+			}
+		}
 	};
 
 	controller.createRunProfile('Run', vscode.TestRunProfileKind.Run, runHandler, true);

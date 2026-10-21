@@ -3,7 +3,7 @@
 	"description": "Editor support for Forge FM",
 	"author": "Siddhartha Prasad",
 	"license": "MIT",
-	"version": "0.2.10",
+	"version": "0.2.11",
 	"repository": {
 		"type": "git",
 		"url": ""
@@ -246,7 +246,8 @@
 		"watch": "tsc -b -w",
 		"lint": "eslint ./client/src ./server/src --ext .ts,.tsx",
 		"postinstall": "cd client && npm install && cd ../server && npm install",
-		"test": "sh ./scripts/e2e.sh"
+		"test": "sh ./scripts/e2e.sh",
+		"test:run-flow": "mocha --ui tdd scripts/tests/run-flow.test.cjs"
 	},
 	"devDependencies": {
 		"@types/mocha": "^8.2.2",

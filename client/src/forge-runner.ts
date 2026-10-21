@@ -18,6 +18,15 @@ export interface ForgeRunOptions {
     // Extra command-line arguments passed to `racket <file>` after the file path.
     // Forge parses these (see its `-o`/`-O` option flags), e.g. to force headless Sterling.
     extraArgs?: string[];
+    // Prepare Sterling after saving, within the same cancelable run request.
+    prepare?: () => Promise<string[] | undefined>;
+    onStart?: () => void;
+}
+
+export interface ForgeRunSession {
+    readonly isCurrent: boolean;
+    readonly isCancelled: boolean;
+    cancel(): void;
 }
 
 export interface ForgeErrorLocation {
@@ -43,7 +52,7 @@ export interface ForgeEnvironment {
 export class ForgeRunner {
     private static instance: ForgeRunner | null = null;
     private currentProcess: ChildProcess | null = null;
-    private wasKilledManually = false;
+    private activeRun: ForgeRunSession | undefined;
     private environment: ForgeEnvironment | null = null;
     private serveModeProbe: Promise<boolean> | undefined = undefined;
 
@@ -258,55 +267,99 @@ export class ForgeRunner {
         return 0;
     }
 
-    /**
-     * Run a Forge file.
-     */
-    async runFile(filePath: string, options: ForgeRunOptions = {}): Promise<void> {
+    /** Reserve ownership before any asynchronous saving or visualizer preparation. */
+    beginRun(): ForgeRunSession {
+        this.kill();
+        const isCurrent = () => this.activeRun === session;
+        const stop = () => this.stopProcess();
+        let cancelled = false;
+        const session: ForgeRunSession = {
+            get isCurrent() { return isCurrent(); },
+            get isCancelled() { return cancelled; },
+            cancel() {
+                cancelled = true;
+                if (session.isCurrent) {
+                    stop();
+                }
+            }
+        };
+        this.activeRun = session;
+        return session;
+    }
+
+    /** Save the requested file before executing it, for both Run and Test Explorer. */
+    async runFile(filePath: string, options: ForgeRunOptions = {}, session = this.beginRun()): Promise<void> {
+        const canRun = () => session.isCurrent && !session.isCancelled;
+        if (!canRun()) { return; }
+        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+        const save = async () => {
+            if (canRun() && document.isDirty && !await document.save()) {
+                throw new Error(`Could not save ${filePath}. Forge was not run.`);
+            }
+        };
+        await save();
+        if (!canRun()) { return; }
         if (!this.environment) {
             await this.initialize();
         }
-
-        // Kill any existing process
-        this.kill(false);
-        this.wasKilledManually = false;
+        if (!canRun()) { return; }
+        const extraArgs = options.prepare ? await options.prepare() : options.extraArgs;
+        // Preparation can take time; include edits made while it was in progress.
+        await save();
+        if (!canRun()) { return; }
+        if (document.isDirty) {
+            throw new Error(`The file changed while saving ${filePath}. Run it again to use the latest changes.`);
+        }
 
         return new Promise((resolve, reject) => {
             const racketPath = this.environment!.racketPath;
 
             // Spawn Racket process with file. Any extraArgs are passed to Forge as
             // command-line arguments after the file path (e.g. `-O run_sterling headless`).
-            this.currentProcess = spawn(racketPath, [filePath, ...(options.extraArgs ?? [])], {
+            const child = spawn(racketPath, [filePath, ...(extraArgs ?? [])], {
                 cwd: path.dirname(filePath),
                 env: { ...process.env }
             });
+            this.currentProcess = child;
+            let processError = false;
 
             // Handle stdout
-            this.currentProcess.stdout?.on('data', (data) => {
-                if (options.onStdout) {
+            child.stdout?.on('data', (data) => {
+                if (canRun() && options.onStdout) {
                     options.onStdout(data.toString());
                 }
             });
 
             // Handle stderr
-            this.currentProcess.stderr?.on('data', (data) => {
-                if (options.onStderr) {
+            child.stderr?.on('data', (data) => {
+                if (canRun() && options.onStderr) {
                     options.onStderr(data.toString());
                 }
             });
 
-            // Handle exit
-            this.currentProcess.on('exit', (code) => {
-                if (options.onExit) {
+            // `close` follows the final stdout/stderr chunks, unlike `exit`.
+            child.on('close', (code) => {
+                if (this.currentProcess === child) {
+                    this.currentProcess = null;
+                }
+                if (!processError && session.isCurrent && options.onExit) {
                     options.onExit(code);
                 }
                 resolve();
             });
 
             // Handle errors (e.g., spawn failure)
-            this.currentProcess.on('error', (err) => {
-                this.output.appendLine(`Error running Forge: ${err.message}`);
+            child.on('error', (err) => {
+                processError = true;
+                if (this.currentProcess === child) {
+                    this.currentProcess = null;
+                }
+                if (session.isCurrent) {
+                    this.output.appendLine(`Error running Forge: ${err.message}`);
+                }
                 reject(err);
             });
+            options.onStart?.();
         });
     }
 
@@ -323,53 +376,36 @@ export class ForgeRunner {
     /**
      * Kill the current Forge process.
      */
-    kill(manual: boolean): void {
-        if (!this.currentProcess) {
+    kill(): void {
+        this.activeRun?.cancel();
+    }
+
+    private stopProcess(): void {
+        const child = this.currentProcess;
+        if (!child) {
             return;
         }
-
-        this.wasKilledManually = manual;
+        this.currentProcess = null;
 
         try {
             // Use SIGTERM for graceful shutdown, let OS handle it
-            this.currentProcess.kill('SIGTERM');
+            child.kill('SIGTERM');
             
             // Set a timeout for forceful kill if needed
-            const pid = this.currentProcess.pid;
-            setTimeout(() => {
-                if (pid && this.isProcessStillRunning(pid)) {
+            const timeout = setTimeout(() => {
+                if (child.exitCode === null && child.signalCode === null) {
                     try {
-                        process.kill(pid, 'SIGKILL');
-                        this.output.appendLine(`Forcefully killed Forge process (PID: ${pid})`);
+                        child.kill('SIGKILL');
                     } catch {
                         // Process already dead
                     }
                 }
             }, 3000);
+            timeout.unref();
+            child.once('close', () => clearTimeout(timeout));
         } catch (err) {
             this.output.appendLine(`Error killing Forge process: ${err}`);
-        } finally {
-            this.currentProcess = null;
         }
-    }
-
-    /**
-     * Check if a process is still running.
-     */
-    private isProcessStillRunning(pid: number): boolean {
-        try {
-            process.kill(pid, 0); // Signal 0 checks existence without killing
-            return true;
-        } catch {
-            return false;
-        }
-    }
-
-    /**
-     * Check if process was killed manually by user.
-     */
-    isKilledManually(): boolean {
-        return this.wasKilledManually;
     }
 
     /**
@@ -383,7 +419,8 @@ export class ForgeRunner {
      * Reset the runner (mainly for testing).
      */
     reset(): void {
-        this.kill(false);
+        this.kill();
+        this.activeRun = undefined;
         this.environment = null;
         this.serveModeProbe = undefined;
     }

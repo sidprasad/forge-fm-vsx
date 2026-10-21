@@ -16,6 +16,8 @@ VS Code support for [Forge](https://forge-fm.org/).
 2. Install the extension from the 
 3. Open a `.frg` file and run `Forge: Run` (or click the Run button).
 
+Run and Test Explorer save the file before executing it. If saving fails, the run stops with an error. Starting another run replaces the previous request; Stop also cancels a run that is still saving or preparing Sterling.
+
 ## Code Completion
 
 Smart, non-intrusive completions for Forge. Trigger with **Ctrl+Space** (Windows/Linux) or **Cmd+Space** (Mac), or let it appear naturally as you type.
