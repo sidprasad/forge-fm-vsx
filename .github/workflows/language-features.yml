@@ -1,0 +1,19 @@
+name: Language Features
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  language-features:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm run test:language
+      - name: Lint language feature sources
+        run: npx eslint server/src/server.ts server/src/symbols.ts server/src/source-context.ts server/src/completion-data.ts server/src/language-features.ts
