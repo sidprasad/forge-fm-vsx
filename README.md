@@ -6,8 +6,8 @@ VS Code support for [Forge](https://forge-fm.org/).
 ## Highlights
 
 - Run Forge files with robust process management (Racket discovery, version checks, graceful stop).
-- LSP essentials: go to definition, hover, and document symbols.
-- **Intelligent code completion**: 60+ Forge keywords and 9 smart snippets for common patterns.
+- Model-aware completion, signature help, hover, go to definition, and document symbols.
+- Keywords matched to `#lang forge/froglet`, `#lang forge`, or `#lang forge/temporal`, plus 9 snippets.
 - Syntax highlighting and language configuration for `.frg`.
 
 ## Quick start
@@ -18,19 +18,22 @@ VS Code support for [Forge](https://forge-fm.org/).
 
 ## Code Completion
 
-Smart, non-intrusive completions for Forge. Trigger with **Ctrl+Space** (Windows/Linux) or **Cmd+Space** (Mac), or let it appear naturally as you type.
+Use **Trigger Suggest** in the Command Palette (or your configured completion shortcut) to see names from the current model:
 
-**Features:**
-- **60+ Keywords**: All Forge keywords (`sig`, `pred`, `fun`, `run`, `check`, `all`, `some`, `always`, etc.)
-- **9 Smart Snippets**: Common code patterns with tab-stop placeholders:
-  - `sig (snippet)` → Full signature declaration template
-  - `pred (snippet)` → Predicate with parameters
-  - `run (snippet)` → Run command with scope
-  - `test expect (snippet)` → Complete test block
-  - Quantifiers: `all (snippet)`, `some (snippet)`
-  - And more...
-- **Context-aware**: Skips completions inside comments and strings
-- **Helpful documentation**: Each item includes description and usage info
+- Signatures, fields, predicates, and functions, with declaration details and doc comments.
+- Parameters, quantified variables, comprehension variables, and `let` bindings that are visible at the cursor. Inner bindings take priority over outer names.
+- Fields after a dot, plus common declaration and quantifier snippets elsewhere.
+- Language-specific keywords: temporal operators and `var` appear for `#lang forge/temporal`; Froglet omits relational constructs such as `set`, `univ`, and `iden`.
+
+Typing `[` or `,` in a predicate/function call shows its signature and highlights the active parameter. Nested calls are handled separately. Hover and **Go to Definition** also work for parameters and local bindings.
+
+Quoted file imports such as `open "shared.frg"` contribute declarations to completion, signature help, hover, and navigation, even when the imported file is closed. Unsaved imported files take precedence over disk contents. Go to Definition on the quoted path opens the file. Forge aliases are direct prefixes: `open "shared.frg" as other` exposes a signature `Node` as `otherNode`.
+
+These features use the editor's syntax parser and tolerate incomplete code. Field suggestions are not filtered by receiver type, and Racket library imports such as `open util/...` are not indexed. Completion skips comments and strings; Racket continues to provide syntax checking.
+
+### Language feature tests
+
+Run `npm run test:language` after installing dependencies. The suite covers model scopes, dialects, incomplete edits, file imports, and actual language-server requests over IPC. The IPC tests stub only the Racket diagnostics process, so they do not require Racket or a VS Code window.
 
 ## Commands & keyboard shortcuts
 
