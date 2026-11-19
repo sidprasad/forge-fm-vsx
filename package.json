@@ -3,7 +3,7 @@
 	"description": "Editor support for Forge FM",
 	"author": "Siddhartha Prasad",
 	"license": "MIT",
-	"version": "0.2.12",
+	"version": "0.2.13",
 	"repository": {
 		"type": "git",
 		"url": ""
