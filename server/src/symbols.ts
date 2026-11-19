@@ -10,7 +10,7 @@ import { ForgeVisitor } from './parser/grammars/ForgeVisitor';
 import { AbstractParseTreeVisitor } from 'antlr4ts/tree/AbstractParseTreeVisitor';
 import { Range } from 'vscode-languageserver';
 import { TextDocument } from 'vscode-languageserver-textdocument';
-import { sourceContext } from './source-context';
+import { identifierPattern, sourceContext } from './source-context';
 
 export enum SymbolKind {
     Sig = 'sig',
@@ -83,7 +83,7 @@ class SymbolExtractorVisitor extends AbstractParseTreeVisitor<void> implements F
     }
 
     getSymbols(): ForgeSymbol[] {
-        return this.symbols.filter(symbol => /^[A-Za-z_][A-Za-z0-9_]*$/.test(symbol.name));
+        return this.symbols.filter(symbol => identifierPattern.test(symbol.name));
     }
 
     getImports(): ForgeImport[] { return this.imports; }

@@ -12,6 +12,10 @@
             "include": "#built-in"
         },
         {
+            "match": "[A-Za-z_][A-Za-z0-9_]*[$][A-Za-z0-9_]*",
+            "name": "variable.other.forge"
+        },
+        {
             "include": "#declaration"
         },
         {
@@ -245,7 +249,7 @@
         },
         "constants": {
             "patterns": [{
-                    "match": "\\b(iden)\\b",
+                    "match": "\\b(iden)\\b(?![$])",
                     "name": "constant.language.forge"
                 }
             ]
@@ -270,7 +274,7 @@
             "repository": {
                 "module": {
                     "patterns": [{
-                        "match": "(module)\\b\\s*((?:\\w|'|_|\\d|/)+)",
+                        "match": "(module)\\b\\s*([\\w']+(?:[$][\\w']*)?(?:/[\\w']+(?:[$][\\w']*)?)*)",
                         "captures": {
                             "1": {
                                 "name": "keyword.language.module.alloy"
@@ -283,7 +287,7 @@
                 },
                 "predicate": {
                     "patterns": [{
-                        "match": "(pred)\\b\\s*((?:\\w|'|_|\\d|/)+)",
+                        "match": "(pred)\\b\\s*([\\w']+(?:[$][\\w']*)?(?:/[\\w']+(?:[$][\\w']*)?)*)",
                         "captures": {
                             "1": {
                                 "name": "keyword.language.pred.alloy"
@@ -296,7 +300,7 @@
                 },
                 "signature": {
                     "patterns": [{
-                        "begin": "(abstract)?\\s*(lone|some|one)?\\s*(sig)\\b\\s*",
+                        "begin": "(abstract)?\\s*(lone|some|one)?\\s*(sig)\\b(?![$])\\s*",
                         "end": "(?=\\{)",
                         "beginCaptures": {
                             "1": {
@@ -310,7 +314,7 @@
                             }
                         },
                         "patterns": [{
-                                "begin": "(extends)",
+                                "begin": "(extends)(?![\\w$])",
                                 "end": "(?=\\{)",
                                 "beginCaptures": {
                                     "1": {
@@ -318,12 +322,12 @@
                                     }
                                 },
                                 "patterns": [{
-                                    "match": "(?:\\w|'|_|\\d|/)+",
+                                    "match": "[\\w']+(?:[$][\\w']*)?(?:/[\\w']+(?:[$][\\w']*)?)*",
                                     "name": "entity.other.inherited-class.alloy"
                                 }]
                             },
                             {
-                                "begin": "(in)",
+                                "begin": "(in)(?![\\w$])",
                                 "end": "(?=\\{)",
                                 "beginCaptures": {
                                     "1": {
@@ -331,7 +335,7 @@
                                     }
                                 },
                                 "patterns": [{
-                                        "match": "(?:\\w|'|_|\\d|/)+",
+                                        "match": "[\\w']+(?:[$][\\w']*)?(?:/[\\w']+(?:[$][\\w']*)?)*",
                                         "name": "entity.other.inherited-class.alloy"
                                     },
                                     {
@@ -341,7 +345,7 @@
                                 ]
                             },
                             {
-                                "match": "(?:\\w|'|_|\\d|/)+",
+                                "match": "[\\w']+(?:[$][\\w']*)?(?:/[\\w']+(?:[$][\\w']*)?)*",
                                 "name": "entity.name.type.signature.alloy"
                             },
                             {
@@ -353,7 +357,7 @@
                 },
                 "fact": {
                     "patterns": [{
-                        "match": "(fact)\\b\\s*((?:\\w|'|_|\\d|/)+)",
+                        "match": "(fact)\\b\\s*([\\w']+(?:[$][\\w']*)?(?:/[\\w']+(?:[$][\\w']*)?)*)",
                         "captures": {
                             "1": {
                                 "name": "keyword.language.fact.alloy"
@@ -366,7 +370,7 @@
                 },
                 "fun": {
                     "patterns": [{
-                        "match": "(fun)\\b\\s*((?:\\w|'|_|\\d|/)+)",
+                        "match": "(fun)\\b\\s*([\\w']+(?:[$][\\w']*)?(?:/[\\w']+(?:[$][\\w']*)?)*)",
                         "captures": {
                             "1": {
                                 "name": "keyword.language.fun.alloy"
@@ -381,7 +385,7 @@
         },
         "expression": {
             "patterns": [{
-                    "match": "(check)\\b\\s*((?:\\w|'|_|\\d|/)+)",
+                    "match": "(check)\\b\\s*([\\w']+(?:[$][\\w']*)?(?:/[\\w']+(?:[$][\\w']*)?)*)",
                     "captures": {
                         "1": {
                             "name": "keyword.language.check.alloy"
@@ -392,7 +396,7 @@
                     }
                 },
                 {
-                    "match": "(example)\\b\\s*((?:\\w|'|_|\\d|/)+)",
+                    "match": "(example)\\b\\s*([\\w']+(?:[$][\\w']*)?(?:/[\\w']+(?:[$][\\w']*)?)*)",
                     "captures": {
                         "1": {
                             "name": "keyword.language.example.alloy"
@@ -403,7 +407,7 @@
                     }
                 },
                 {
-                    "match": "(assert)\\b\\s*((?:\\w|'|_|\\d|/)+)",
+                    "match": "(assert)\\b\\s*([\\w']+(?:[$][\\w']*)?(?:/[\\w']+(?:[$][\\w']*)?)*)",
                     "captures": {
                         "1": {
                             "name": "keyword.language.assert.alloy"
@@ -434,7 +438,7 @@
                     }
                 },
                 {
-                    "match": "\\b(open)\\b\\s*((?:\\w|'|_|\\d|/)+)(\\[)",
+                    "match": "\\b(open)\\b\\s*([\\w']+(?:[$][\\w']*)?(?:/[\\w']+(?:[$][\\w']*)?)*)(\\[)",
                     "captures": {
                         "1": {
                             "name": "keyword.other.open.alloy"
@@ -448,7 +452,7 @@
                     }
                 },
                 {
-                    "match": "((?:\\w|'|_|\\d)+)\\s*(\\[)",
+                    "match": "([\\w']+(?:[$][\\w']*)?)\\s*(\\[)",
                     "captures": {
                         "1": {
                             "name": "support.function.order.alloy"
