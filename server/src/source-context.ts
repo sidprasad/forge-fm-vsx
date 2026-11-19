@@ -47,8 +47,12 @@ export function sourceContext(text: string): {
     };
 }
 
+// Mirrors IDENTIFIER_TOK in ForgeLexer.g4.
+const identifier = /[A-Za-z_][A-Za-z0-9_]*(?:\$[A-Za-z0-9_]*)?/.source;
+export const identifierPattern = new RegExp(`^${identifier}$`);
+
 export function wordAt(code: string, offset: number): { name: string; start: number; end: number } | undefined {
-    const pattern = /[A-Za-z_][A-Za-z0-9_]*(?:\/[A-Za-z_][A-Za-z0-9_]*)*/g;
+    const pattern = new RegExp(`${identifier}(?:/${identifier})*`, 'g');
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(code))) {
         if (offset >= match.index && offset <= match.index + match[0].length) {

@@ -6,6 +6,25 @@ const { pathToFileURL } = require('url');
 const { TextDocument } = require('vscode-languageserver-textdocument');
 const { ForgeLanguageFeatures } = require('../../server/out/language-features');
 
+const { ForgeLexer } = require('../../server/out/parser/grammars/ForgeLexer');
+const serverRequire = require('module').createRequire(require.resolve('../../server/package.json'));
+const { CharStreams } = serverRequire('antlr4ts');
+
+suite('Forge identifier lexer', () => {
+    test('accepts at most one dollar sign after the first character', () => {
+        for (const [name, valid] of [
+            ['Node', true], ['Node$0', true], ['_x$tag_2', true], ['n$', true],
+            ['$Node', false], ['n$$0', false], ['a$b$c', false]
+        ]) {
+            const lexer = new ForgeLexer(CharStreams.fromString(name));
+            lexer.removeErrorListeners();
+            const tokens = lexer.getAllTokens();
+            const isIdentifier = tokens.length === 1 && tokens[0].type === ForgeLexer.IDENTIFIER_TOK && tokens[0].text === name;
+            assert.equal(isIdentifier, valid, name);
+        }
+    });
+});
+
 function marked(text) {
     const offset = text.indexOf('¦');
     assert.ok(offset >= 0);
@@ -37,6 +56,15 @@ suite('Model-aware language features', () => {
         assert.match(items.find(i => i.label === 'Person').documentation.value, /A person/);
         assert.match(items.find(i => i.label === 'knows').detail, /p.*q.*Person/);
         assert.ok(!labels(items).includes('p'));
+    });
+
+    test('resolves and completes the whole identifier across a dollar sign', async () => {
+        const d = document('sig Node {}\nsig Node$10 {}\nrun { some Node$1¦0 }');
+        const model = open.get(d.uri);
+        const [definition] = await features.definition(d.uri, d.position);
+        assert.equal(model.getText(definition.range), 'Node$10');
+        const item = (await complete(d)).find(item => item.label === 'Node$10');
+        assert.equal(model.getText(item.textEdit.range), 'Node$10');
     });
 
     test('parameters and quantified variables are scoped and shadow correctly', async () => {
